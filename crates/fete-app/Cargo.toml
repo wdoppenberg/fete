@@ -1,0 +1,18 @@
+[package]
+name = "fete-app"
+description = "The show shell: window and projector setup, live keyboard control, and the operator HUD."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+fete-core = { workspace = true }
+
+[features]
+default = []
+hot-shaders = ["fete-core/hot-shaders", "bevy/file_watcher"]

@@ -1,0 +1,21 @@
+[package]
+name = "fete-visual-slime"
+description = "Slime — a physarum agent simulation on the GPU. The reference compute visual for the fete framework."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+bytemuck = { workspace = true }
+fete-core = { workspace = true }
+fete-app = { workspace = true }
+rand = { workspace = true }
+
+[features]
+default = []
+hot-shaders = ["fete-app/hot-shaders"]

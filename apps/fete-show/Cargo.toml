@@ -1,0 +1,37 @@
+[package]
+name = "fete-show"
+description = "The combined show: every visual in one cyclable app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "fete-show"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+fete-core = { workspace = true }
+fete-app = { workspace = true }
+fete-visual-kanban = { workspace = true }
+fete-visual-kura = { workspace = true }
+fete-visual-neon = { workspace = true }
+fete-visual-slime = { workspace = true }
+fete-visual-sprawl = { workspace = true }
+fete-visual-yama = { workspace = true }
+
+[features]
+default = []
+hot-shaders = [
+    "fete-app/hot-shaders",
+    "fete-visual-kanban/hot-shaders",
+    "fete-visual-kura/hot-shaders",
+    "fete-visual-neon/hot-shaders",
+    "fete-visual-slime/hot-shaders",
+    "fete-visual-sprawl/hot-shaders",
+    "fete-visual-yama/hot-shaders",
+]

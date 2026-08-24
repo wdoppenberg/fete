@@ -1,0 +1,19 @@
+[package]
+name = "fete-visual-kura"
+description = "Kura — three flocks, Kuramoto-pulsed fireflies and the geometry that forms between them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+fete-core = { workspace = true }
+fete-app = { workspace = true }
+
+[features]
+default = []
+hot-shaders = ["fete-app/hot-shaders"]

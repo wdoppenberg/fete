@@ -1,0 +1,79 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/fete-core",
+    "crates/fete-app",
+    "visuals/fete-visual-kanban",
+    "visuals/fete-visual-kura",
+    "visuals/fete-visual-neon",
+    "visuals/fete-visual-slime",
+    "visuals/fete-visual-sprawl",
+    "visuals/fete-visual-yama",
+    "apps/fete-show",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/wdoppenberg/fete"
+
+[workspace.lints.clippy]
+# Bevy systems take one parameter per resource they touch; the count is a
+# consequence of the ECS, not of a function doing too much.
+too_many_arguments = "allow"
+
+[workspace.dependencies]
+fete-core = { path = "crates/fete-core" }
+fete-app = { path = "crates/fete-app" }
+fete-visual-kanban = { path = "visuals/fete-visual-kanban" }
+fete-visual-kura = { path = "visuals/fete-visual-kura" }
+fete-visual-neon = { path = "visuals/fete-visual-neon" }
+fete-visual-slime = { path = "visuals/fete-visual-slime" }
+fete-visual-sprawl = { path = "visuals/fete-visual-sprawl" }
+fete-visual-yama = { path = "visuals/fete-visual-yama" }
+
+# Deliberately not `default`: no PBR, glTF, animation, audio or picking. A
+# visualiser is a 2d compositor over compute/fullscreen passes, and the trimmed
+# feature set roughly halves cold build times.
+bevy = { version = "0.19", default-features = false, features = [
+    "2d",
+    "bevy_asset",
+    "bevy_core_pipeline",
+    "bevy_log",
+    "bevy_post_process",
+    "bevy_render",
+    "bevy_shader",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_window",
+    "bevy_winit",
+    "default_font",
+    "keyboard",
+    "mouse",
+    "multi_threaded",
+    "png",
+    "std",
+    "async_executor",
+    "tonemapping_luts",
+    "x11",
+    "wayland",
+    # Required backend for the KTX2 textures the tonemapping LUTs ship as.
+    "zstd_rust",
+] }
+bytemuck = { version = "1", features = ["derive"] }
+rand = "0.9"
+
+# Visuals are GPU-bound; the CPU side is mostly bookkeeping. Optimising deps
+# even in debug keeps iteration fast without paying full release build times.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
