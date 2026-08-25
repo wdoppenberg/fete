@@ -23,6 +23,7 @@ visuals/fete-visual-yama  Yama, a volcanic cone at dusk, circled slowly
 visuals/fete-visual-terebi Terebi, a wall of CRT sets playing late-night television
 visuals/fete-visual-kura  Kura, three flocks and the geometry between them
 apps/fete-show            the combined show: every visual, running itself
+tools/glyph-atlas         bakes Kanban's glyph atlas from a Japanese font
 ```
 
 Each visual crate is both a library and a binary. Run one on its own while you
@@ -316,14 +317,37 @@ a lit street grid with traffic moving along it, fading into haze.
 vertical columns of characters, framed boards, single large glyphs, a few
 hanging off rails, all drifting outward as the view flies slowly through them.
 
-There is no font and no texture. A character is *composed* the way a kanji is
-composed — a square field carrying one, two or three radicals, side by side,
-stacked, or one inside an enclosure — and each radical is a small arrangement
-of strokes drawn as capsules. That is the whole trick: the eye reads a script
-from across a room by its composition and its stroke density long before it can
-read a character, so hashing the structure produces something unmistakably
-East-Asian that is never a real word. Straight strokes alone read as Chinese;
-the curved, sparser kana branch is what makes a column look Japanese.
+**The signs say real things.** The characters were composed out of hashed
+radicals once, which read convincingly from across a room and spelled nothing
+at all — a wall of not-quite-words in front of anyone who reads the script.
+They now come from a vocabulary of some sixty words that are actually lit up on
+a street in Tokyo: drink, noodles, baths, pachinko, place names, the phrases a
+shopfront uses to say it is open, and the words of 酉の市, the Festival of the
+Rooster — which carries the only weight in the list above one, so it comes
+round a little more often than everything else without becoming the wallpaper.
+
+The letterforms are real too, and what ships for them is neither a font nor a
+picture of the characters. `tools/glyph-atlas` bakes each character of the
+vocabulary into one cell of a **signed distance field** — how far the nearest
+stroke is, from every point — and Kanban draws its tube, its core and its halo
+straight out of that. It is what a neon tube wants: one 128-pixel cell serves a
+sign filling a third of the frame and a sign four pixels tall in the same frame,
+and strokes narrower than the pixel they land on get *dimmer* rather than break
+up, so the far layers stay a soft glow instead of a boiling mess.
+
+To change what the signs say, edit `WORDS` in
+`visuals/fete-visual-kanban/src/lexicon.rs` and re-bake:
+
+```sh
+tools/fetch-font.sh                 # Noto Sans CJK JP Light, once, 16 MB
+cargo run -p fete-glyph-atlas       # rewrites src/glyphs.png
+```
+
+The vocabulary and the atlas are indexed by position, so a word added without a
+re-bake would quietly spell itself out of whatever characters had moved into
+those cells. A test fails instead. The font itself is not committed and nothing
+at runtime reads it; it is [Noto Sans CJK](https://github.com/notofonts/noto-cjk),
+under the SIL Open Font License 1.1.
 
 Depth is an **infinite zoom**. Four layers an octave apart grow and stream
 outward, and when the zoom passes a whole octave each layer hands its contents

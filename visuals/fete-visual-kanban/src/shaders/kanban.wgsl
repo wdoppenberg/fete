@@ -1,13 +1,14 @@
 // Kanban — 看板, "signboard". A field of Japanese neon signs floating past in
 // the dark.
 //
-// There is no font here and no texture. A character is *composed* the way a
-// kanji is composed: a square field carrying one, two or three radicals — side
-// by side, stacked, or one sitting inside an enclosure — each of which is a
-// small arrangement of strokes drawn as capsules. The eye reads a script from
-// across a room by its composition and its stroke density long before it can
-// read a character, so hashing that structure gives something unmistakably
-// East-Asian signage that is never a real word.
+// The signs say real things. Every one of them carries a word from the
+// vocabulary in `lexicon.rs` — drink, noodles, baths, pachinko, a place name,
+// the phrase a shopfront uses to say it is open, and the words of 酉の市 — set
+// in real characters taken from a real Japanese face. What ships is not a font
+// and not a picture of the characters: `glyphs.png` holds one cell per
+// character of the *distance* to its strokes, which is exactly what a neon tube
+// is drawn from, and what lets a single 128-pixel cell serve a sign filling a
+// third of the frame and a sign four pixels tall in the same frame.
 //
 // Depth is an infinite zoom. Four layers an octave apart drift outward and
 // grow, and when the zoom passes a whole octave every layer hands its contents
@@ -30,8 +31,26 @@ struct KanbanParams {
     _pad2: f32,
 }
 
+// Room in the uniform for the weight-expanded vocabulary. Must match
+// `MAX_SLOTS` in `lexicon.rs`.
+const MAX_SLOTS: u32 = 128u;
+
+struct KanbanLexicon {
+    // Atlas columns, atlas rows, draw slots in use, and the atlas index of the
+    // long vowel mark — the one character whose shape depends on whether the
+    // sign is set down the column or across.
+    grid: vec4<f32>,
+    // One row per draw slot: up to four glyph indices, `-1.0` for the unused
+    // tail. A word that should come up more often occupies more rows, which is
+    // why picking one is a single lookup with no distribution to walk.
+    slots: array<vec4<f32>, MAX_SLOTS>,
+}
+
 @group(2) @binding(0) var<uniform> globals: Globals;
 @group(2) @binding(1) var<uniform> params: KanbanParams;
+@group(2) @binding(2) var<uniform> lexicon: KanbanLexicon;
+@group(2) @binding(3) var atlas: texture_2d<f32>;
+@group(2) @binding(4) var atlas_sampler: sampler;
 
 // Fed by the quality tier — see `Kanban::specialize`.
 const LAYERS: i32 = #{LAYERS};
@@ -64,173 +83,62 @@ fn box_edge(p: vec2<f32>, half: vec2<f32>) -> f32 {
     return abs(box_fill(p, half));
 }
 
-// A curved stroke, as three capsules along a quadratic Bézier.
-//
-// Only the kana use it, and they are the reason it exists: a glyph set built
-// entirely from straight segments reads as Chinese. The curves and the extra
-// whitespace are what make a column look like written Japanese.
-fn curve(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, bend: f32) -> f32 {
-    let dir = b - a;
-    let n = normalize(vec2<f32>(-dir.y, dir.x));
-    let m = (a + b) * 0.5 + n * bend;
-
-    var d = 1e9;
-    var prev = a;
-    for (var i = 1; i <= 3; i++) {
-        let t = f32(i) / 3.0;
-        let u = 1.0 - t;
-        let q = a * (u * u) + m * (2.0 * u * t) + b * (t * t);
-        d = min(d, stroke(p, prev, q));
-        prev = q;
-    }
-    return d;
-}
-
-// Centre and half-extent of the span `lo..hi`, packed as one vec2.
-fn span_of(lo: f32, hi: f32) -> vec2<f32> {
-    return vec2<f32>((lo + hi) * 0.5, (hi - lo) * 0.5);
-}
-
 // --- characters --------------------------------------------------------------
 
-// A radical: the unit kanji are actually built from.
+// How much of an atlas cell the character's em square covers, inverted: the
+// cell is this many em across. Must match `ATLAS_EM` in `lexicon.rs`.
 //
-// `c` and `r` are the centre and half-extent of the box it has to fill, passed
-// in rather than applied to the coordinate by the caller. Scaling `p` would be
-// shorter, but it scales the returned distance with it, and every stroke in a
-// compound character would come out thinner than the strokes of a simple one.
-// Placing the strokes instead keeps one stroke width across the whole frame.
-fn radical(p: vec2<f32>, id: f32, c: vec2<f32>, r: vec2<f32>) -> f32 {
-    let q = p - c;
-    let kind = hash11(id * 1.31 + 0.7);
-    let a = hash11(id * 2.17 + 3.1);
-    let b = hash11(id * 3.71 + 8.3);
+// The margin around the character is not padding. It is where the distance
+// field lives — a character drawn edge to edge in its cell would have nowhere
+// to record how far away it is, and its glow would stop dead on the cell
+// boundary.
+const CELL_EM: f32 = 1.0 / 0.62;
+// The distance at full black and full white, in em. Must match `ATLAS_RANGE`.
+const ATLAS_RANGE: f32 = 0.8;
+// Half the light weight's stroke width, in em, and how much is added to it to
+// make a tube. The face the atlas is baked from is the thinnest weight that
+// still holds its shape, and the width the signs are actually lit at is set
+// here — a heavy face would close up the inside of a dense character (繁, 舞,
+// 薬) the moment it was asked to glow, and no amount of shader can reopen it.
+const STROKE: f32 = 0.024;
+const THICKEN: f32 = 0.018;
+// Half a texel of the atlas, in cell units — the inset that keeps a sample
+// from reaching into the character next door.
+const ATLAS_INSET: f32 = 0.5 / 128.0;
 
-    var d = 1e9;
-
-    if kind < 0.26 {
-        // 口 日 目 田 — an enclosure, with none, one or two crossbars.
-        d = box_edge(q, r);
-        let bars = floor(a * 2.99);
-        for (var i = 0.0; i < bars; i += 1.0) {
-            let y = r.y - 2.0 * r.y * (i + 1.0) / (bars + 1.0);
-            d = min(d, stroke(q, vec2<f32>(-r.x, y), vec2<f32>(r.x, y)));
-        }
-        if b > 0.78 {
-            d = min(d, stroke(q, vec2<f32>(0.0, -r.y), vec2<f32>(0.0, r.y)));
-        }
-    } else if kind < 0.52 {
-        // 三 王 十 土 — horizontals, on a stem about half the time. The widths
-        // have to be unequal: a stack of identical bars reads as a barcode,
-        // and no character in any script is that regular.
-        let n = 2.0 + floor(a * 2.99);
-        for (var i = 0.0; i < n; i += 1.0) {
-            let y = mix(r.y, -r.y, i / (n - 1.0));
-            let w = r.x * (0.55 + 0.45 * hash11(id + i * 5.3));
-            d = min(d, stroke(q, vec2<f32>(-w, y), vec2<f32>(w, y)));
-        }
-        if b > 0.35 {
-            d = min(d, stroke(q, vec2<f32>(0.0, r.y), vec2<f32>(0.0, -r.y)));
-        }
-    } else if kind < 0.70 {
-        // 川 リ 竹 — verticals of unequal length.
-        let n = 2.0 + floor(a * 1.99);
-        for (var i = 0.0; i < n; i += 1.0) {
-            let x = mix(-r.x, r.x, i / (n - 1.0));
-            let top = r.y * (0.7 + 0.3 * hash11(id + i * 7.7));
-            let bot = -r.y * (0.7 + 0.3 * hash11(id + i * 2.9));
-            d = min(d, stroke(q, vec2<f32>(x, top), vec2<f32>(x, bot)));
-        }
-    } else if kind < 0.86 {
-        // 人 大 木 天 — a stem with diagonals splaying off it.
-        d = stroke(q, vec2<f32>(0.0, r.y), vec2<f32>(0.0, -r.y));
-        let fork = r.y * mix(0.5, -0.1, a);
-        d = min(d, stroke(q, vec2<f32>(0.0, fork), vec2<f32>(-r.x, -r.y)));
-        d = min(d, stroke(q, vec2<f32>(0.0, fork), vec2<f32>(r.x, -r.y)));
-        if b > 0.5 {
-            let y = mix(r.y * 0.6, 0.0, b);
-            d = min(d, stroke(q, vec2<f32>(-r.x * 0.9, y), vec2<f32>(r.x * 0.9, y)));
-        }
-    } else {
-        // 小 心 火 — a stem and a pair of dots. The sparsest radical, and the
-        // one that stops a column of characters being uniformly dense.
-        d = stroke(q, vec2<f32>(0.0, r.y), vec2<f32>(0.0, -r.y * (0.6 + 0.4 * a)));
-        d = min(d, stroke(q, vec2<f32>(-r.x * 0.7, r.y * 0.4), vec2<f32>(-r.x * 0.9, -r.y * 0.3)));
-        d = min(d, stroke(q, vec2<f32>(r.x * 0.7, r.y * 0.4), vec2<f32>(r.x * 0.9, -r.y * 0.3)));
-    }
-
-    return d;
-}
-
-// One character, in a square field spanning -0.5..0.5.
+// Signed distance to one character, in em, at `p` em from the centre of its
+// square. Negative inside a stroke.
 //
-// The layout — how the field is divided between radicals — carries far more of
-// the impression than the strokes do. Left-against-right is the commonest
-// shape in the language and the one that most makes a mark read as a
-// character rather than a symbol.
-fn glyph(p: vec2<f32>, id: f32) -> f32 {
-    let shape = hash11(id * 0.93 + 5.7);
-    let a = hash11(id * 4.11 + 1.3);
-    let b = hash11(id * 6.29 + 2.9);
-
-    if shape < 0.20 {
-        // One radical filling the square: 口 十 人 小
-        return radical(p, id + 11.0, vec2<f32>(0.0), vec2<f32>(0.40, 0.42));
-    } else if shape < 0.48 {
-        // Left | right: 明 好 話 — a narrow radical against a wider body.
-        let split = mix(-0.12, 0.02, a);
-        let l = span_of(-0.44, split - 0.03);
-        let r = span_of(split + 0.03, 0.44);
-        return min(
-            radical(p, id + 3.0, vec2<f32>(l.x, 0.0), vec2<f32>(l.y, 0.42)),
-            radical(p, id + 7.0, vec2<f32>(r.x, 0.0), vec2<f32>(r.y, 0.42)),
-        );
-    } else if shape < 0.66 {
-        // Top | bottom: 音 星 分
-        let split = mix(-0.02, 0.14, a);
-        let t = span_of(split + 0.04, 0.44);
-        let u = span_of(-0.44, split - 0.04);
-        return min(
-            radical(p, id + 13.0, vec2<f32>(0.0, t.x), vec2<f32>(0.40, t.y)),
-            radical(p, id + 17.0, vec2<f32>(0.0, u.x), vec2<f32>(0.42, u.y)),
-        );
-    } else if shape < 0.80 {
-        // A crown over a body: 京 高 市 安. The lone dot above the top bar is
-        // a tiny mark that does an enormous amount of the work.
-        var d = stroke(p, vec2<f32>(-0.38, 0.30), vec2<f32>(0.38, 0.30));
-        d = min(d, stroke(p, vec2<f32>(0.0, 0.46), vec2<f32>(0.0, 0.36)));
-        if a > 0.5 {
-            // 宀 — the shoulders of a roof radical.
-            d = min(d, stroke(p, vec2<f32>(-0.38, 0.30), vec2<f32>(-0.38, 0.14)));
-            d = min(d, stroke(p, vec2<f32>(0.38, 0.30), vec2<f32>(0.38, 0.14)));
-        }
-        return min(d, radical(p, id + 23.0, vec2<f32>(0.0, -0.14), vec2<f32>(0.34, 0.30)));
-    } else if shape < 0.88 {
-        // An enclosure with something inside: 国 回 図
-        return min(
-            box_edge(p, vec2<f32>(0.42, 0.44)),
-            radical(p, id + 29.0, vec2<f32>(0.0, -0.02), vec2<f32>(0.22, 0.24)),
-        );
+// `turn` sets the character a quarter turn, for the long vowel mark: ラーメン
+// runs the dash across the line and down the column, and it is the only
+// character in the vocabulary that is not the same shape both ways.
+fn glyph(index: f32, p: vec2<f32>, turn: bool) -> f32 {
+    var q = p;
+    if turn {
+        q = vec2<f32>(q.y, -q.x);
     }
 
-    // Kana: two or three strokes, mostly curved, deliberately off centre. The
-    // gap in density between these and the kanji above is most of what makes a
-    // column of them look written rather than generated.
-    var d = curve(
-        p,
-        vec2<f32>(0.30 - 0.5 * a, 0.42),
-        vec2<f32>(-0.34, -0.40 + 0.3 * b),
-        mix(-0.16, 0.16, a),
-    );
-    if a > 0.30 {
-        d = min(d, stroke(p, vec2<f32>(-0.36, 0.30), vec2<f32>(0.30, 0.24 + 0.10 * b)));
-    }
-    if b > 0.45 {
-        d = min(d, curve(p, vec2<f32>(0.26, 0.12), vec2<f32>(0.10, -0.36), 0.10));
-    } else if b < 0.25 {
-        d = min(d, stroke(p, vec2<f32>(0.24, -0.08), vec2<f32>(0.34, -0.30)));
-    }
-    return d;
+    let cols = lexicon.grid.x;
+    let col = index - cols * floor(index / cols);
+    let row = floor(index / cols);
+
+    // Into the cell, and clamped to it: the field outside is another
+    // character's, and one texel of bleed at this magnification is a stray
+    // stroke hanging in the air beside the sign.
+    var t = vec2<f32>(0.5 + q.x / CELL_EM, 0.5 - q.y / CELL_EM);
+    t = clamp(t, vec2<f32>(ATLAS_INSET), vec2<f32>(1.0 - ATLAS_INSET));
+
+    let uv = (vec2<f32>(col, row) + t) / lexicon.grid.xy;
+    // Sampled at an explicit level: this runs inside branching that neighbouring
+    // pixels do not agree on, where an implicit derivative is undefined.
+    let field = textureSampleLevel(atlas, atlas_sampler, uv, 0.0).r;
+    let d = (0.5 - field) * (2.0 * ATLAS_RANGE);
+
+    // Past the cell the sample is clamped and the field stops falling away,
+    // which would leave the glow with a square edge on it. The cell's own box
+    // never overstates the distance to something inside the cell, so taking
+    // whichever is larger keeps the falloff going with nothing to sample.
+    return max(d, box_fill(q, vec2<f32>(CELL_EM * 0.5)));
 }
 
 // --- signs -------------------------------------------------------------------
@@ -266,10 +174,32 @@ fn sign_light(
 
     let t = globals.time;
 
+    // A minority of signs change what they say, on a phrase boundary and all
+    // at once — a word only means anything whole, so this is one sign
+    // alternating between two messages rather than its characters turning over
+    // independently. The dip is what a real sign does as it relights.
+    let mutates = step(0.72, hc.y);
+    let cycle = globals.beat / 16.0 + ha.x * 5.0;
+    let era = floor(cycle) * mutates;
+    let relight = mix(1.0, smoothstep(0.0, 0.12, fract(cycle)), mutates);
+
+    // What this sign says: one row of the vocabulary, held until it changes.
+    // Everything about the sign follows from the word — how many characters,
+    // how large they are, how much board there is to frame — rather than the
+    // word being cut to fit a sign that was already sized.
+    let pick = hash11(dot(cell, vec2<f32>(12.9, 78.2)) + ks + era * 101.3);
+    let slots = lexicon.grid.z;
+    let word = lexicon.slots[u32(clamp(floor(pick * slots), 0.0, slots - 1.0))];
+
+    // How long the word is. The tail of the row is -1.
+    var count = 1.0;
+    if word.y >= 0.0 { count = 2.0; }
+    if word.z >= 0.0 { count = 3.0; }
+    if word.w >= 0.0 { count = 4.0; }
+
     // Vertical columns dominate. A shopfront in Tokyo hangs its name down the
     // side of the building because that is the face the street can see.
     let vertical = ha.y < 0.68;
-    let count = 1.0 + floor(hb.x * 3.99);
 
     // Character half-size, shrinking as the count goes up so that a column of
     // four and a single large character both fit their cell with the same
@@ -288,8 +218,9 @@ fn sign_light(
     q = rotate2(q, (hf.y - 0.5) * (0.08 + melt * 0.8));
 
     // The sign's own bounding box, and a cheap reject against it. Most pixels
-    // of an occupied cell are nowhere near the sign, and the characters below
-    // are by far the most expensive thing in this shader.
+    // of an occupied cell are nowhere near the sign, and everything below is
+    // the expensive half of this shader — the only texture fetch in it
+    // included.
     let bounds = select(vec2<f32>(span, gs), vec2<f32>(gs, span), vertical);
     if box_fill(q, bounds + gs * 2.0) > 0.0 {
         return vec3<f32>(0.0);
@@ -307,39 +238,44 @@ fn sign_light(
         gq.x -= offset;
     }
 
-    // A minority of signs change what they say, one character at a time and on
-    // a phrase boundary, with the dip a real sign makes as it switches.
-    let mutates = step(0.72, hc.y);
-    let cycle = globals.beat / 16.0 + ha.x * 5.0 + slot * 0.13;
-    let era = floor(cycle) * mutates;
-    let relight = mix(1.0, smoothstep(0.0, 0.12, fract(cycle)), mutates);
+    // Which character of the word that is. A column is read downwards and the
+    // axis runs upwards, so a vertical sign takes them in reverse — get this
+    // the wrong way round and every sign in the frame is spelled backwards.
+    let index = word[u32(select(slot, count - 1.0 - slot, vertical))];
+    let turn = vertical && abs(index - lexicon.grid.w) < 0.5;
 
-    let id = hash11(dot(cell, vec2<f32>(12.9, 78.2)) + ks + slot * 31.7 + era * 101.3);
+    // The character's em square, a shade under the slot it sits in. The gap is
+    // what keeps a column from reading as one tall smear once the halo is on.
+    let em = gs * 2.0 * 0.78;
 
-    // Melt: the characters squirm. Applied to the whole glyph rather than to
-    // its strokes, which keeps them legible as characters while never quite
+    // Melt: the characters squirm. Applied to the whole character rather than
+    // to its strokes, which keeps it legible as a word while never quite
     // holding still.
-    var gp = gq / gs;
-    gp += vec2<f32>(sin(t * 1.9 + id * 31.0), cos(t * 1.5 + id * 17.0)) * melt * 0.10;
-    gp = rotate2(gp, sin(t * 0.7 + id * 7.0) * melt * 0.20);
+    let phase = hash11(dot(cell, vec2<f32>(12.9, 78.2)) + ks + slot * 31.7);
+    var gp = gq / em;
+    gp += vec2<f32>(sin(t * 1.9 + phase * 31.0), cos(t * 1.5 + phase * 17.0)) * melt * 0.10;
+    gp = rotate2(gp, sin(t * 0.7 + phase * 7.0) * melt * 0.20);
 
-    let d = glyph(gp, id) * gs;
+    // Signed, and thickened into a tube on the way out of em.
+    let d = (glyph(index, gp, turn) - THICKEN) * em;
 
-    // Stroke width follows character size, floored at the pixel footprint: a
-    // sign whose strokes fall between samples has to get *dimmer* rather than
-    // break up, so the tube is widened to the filter and its peak scaled down
-    // by exactly the amount it was widened. Total emitted light is unchanged,
-    // which is what makes the far layers read as a soft glow instead of a
-    // boiling mess.
-    let w = gs * 0.085;
-    let wf = max(w, px * 0.8);
-    let fill = w / wf;
+    // Strokes narrower than the pixel they land on have to get *dimmer* rather
+    // than break up, so the tube is widened to the filter and its peak scaled
+    // down by exactly the amount it was widened. Total emitted light is
+    // unchanged, which is what makes the far layers read as a soft glow instead
+    // of a boiling mess.
+    let hw = em * (STROKE + THICKEN);
+    let aa = max(px * 0.8, 1e-6);
+    // What the tube is actually drawn at, and what that costs in brightness.
+    let wf = max(hw, aa);
+    let widen = wf - hw;
+    let fill = hw / wf;
 
-    let core = 1.0 - smoothstep(wf * 0.35, wf, d);
+    let core = 1.0 - smoothstep(-aa * 0.5, aa * 0.5, d - widen);
     // Deliberately tight: the wide glow comes from the bloom pass downstream,
     // and a halo any broader than this would reach the cell boundary and get
     // cut off square.
-    let halo = exp(-d / (gs * 0.30));
+    let halo = exp(-max(d, 0.0) / (em * 0.19));
 
     // Faults and chases. A tube on its way out is the single detail that reads
     // as a real street rather than a render.

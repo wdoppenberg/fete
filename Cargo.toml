@@ -12,6 +12,7 @@ members = [
     "visuals/fete-visual-terebi",
     "visuals/fete-visual-yama",
     "apps/fete-show",
+    "tools/glyph-atlas",
 ]
 
 [workspace.package]

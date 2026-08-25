@@ -2,3 +2,6 @@
 /captures
 .DS_Store
 /video
+
+# Fetched by tools/fetch-font.sh; the atlas baked from it is what ships.
+/tools/glyph-atlas/*.otf
