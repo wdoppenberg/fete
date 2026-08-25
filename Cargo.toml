@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/fete-core",
     "crates/fete-app",
+    "crates/fete-video",
     "visuals/fete-visual-kanban",
     "visuals/fete-visual-kura",
     "visuals/fete-visual-neon",
@@ -27,6 +28,7 @@ too_many_arguments = "allow"
 [workspace.dependencies]
 fete-core = { path = "crates/fete-core" }
 fete-app = { path = "crates/fete-app" }
+fete-video = { path = "crates/fete-video" }
 fete-visual-kanban = { path = "visuals/fete-visual-kanban" }
 fete-visual-kura = { path = "visuals/fete-visual-kura" }
 fete-visual-neon = { path = "visuals/fete-visual-neon" }

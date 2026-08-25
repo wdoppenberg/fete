@@ -1,19 +1,42 @@
 //! **Terebi** — テレビ. A wall of 90s CRT sets in a dark room, each one playing
-//! its own fragment of late-night Japanese television: a studio, an anime
-//! impact frame, a vertical shooter, a platformer, a pseudo-3d racer, a test
-//! card, and the ones showing nothing but snow.
+//! its own fragment of late-night Japanese television: 風雲!たけし城, a variety
+//! studio, a quiz panel, ゲゲゲの鬼太郎, ドラゴンボール, and the ones showing
+//! nothing but snow.
 //!
 //! The wall is carved rather than tiled. A cell is cut in half along its longer
-//! side up to twice, each cut decided by a hash, and every rectangle that falls
-//! out is one set — unequal sizes, no neighbour lookups, nothing stored. That
-//! matters more here than anywhere else in the show: a grid of identical lit
-//! rectangles is the one thing a wall of televisions must never look like.
+//! side up to three times, each cut decided by a hash, and every rectangle that
+//! falls out is one set — unequal sizes, no neighbour lookups, nothing stored.
+//! That matters more here than anywhere else in the show: a grid of identical
+//! lit rectangles is the one thing a wall of televisions must never look like.
 //!
-//! Nine channels, each a pure function of a picture coordinate in `-1..1`. That
-//! is what makes the sync work: when the wall gangs up, every set is handed the
-//! position of its own glass on the wall instead of its own local coordinate,
-//! and the same nine functions paint one enormous picture split across every
-//! screen — each piece still bulging through its own tube. It costs one `mix`.
+//! # What is on
+//!
+//! Footage, decoded by [`fete_video`] from the clips in `./video` — see
+//! `tools/fetch-clips.sh`. Every set that is switched on is showing a real
+//! broadcast, and which one is decided by *position* rather than by a hash, so
+//! two sets near each other can never be showing the same thing.
+//!
+//! This visual used to carry nine synthesised programmes instead — a studio, an
+//! anime impact frame, a vertical shooter, a platformer, a pseudo-3d racer, a
+//! title card, a test card — each a pure function of a picture coordinate.
+//! They are gone. What is left of that idea is snow, which is not a programme:
+//! it is what a television does with no signal, and it covers the instant after
+//! a set retunes and the case where there are no feeds at all.
+//!
+//! **The consequence is that clips are no longer optional.** Without them —
+//! no `ffmpeg`, no `./video`, `--no-video` — every set on the wall shows snow.
+//! That is an honest picture of a room full of untuned televisions and it is
+//! not a crash, but it is not the visual either.
+//!
+//! # The sync
+//!
+//! Every so often the wall gangs up. Half the time that means every set is
+//! handed the same feed and the same clock and plays it at its own scale — a
+//! shop window with every screen tuned to one broadcast. The other half, every
+//! set is handed the position of its own glass on the wall instead of its own
+//! picture coordinate, and one enormous picture is split across every screen,
+//! each piece still bulging through its own tube. That second one costs a `mix`
+//! on two floats.
 //!
 //! # Knobs
 //!
@@ -21,16 +44,18 @@
 //! |-----|------|------|
 //! | Q/A | 0 | brightness |
 //! | W/S | 1 | how many sets are switched on |
-//! | E/D | 2 | how often the sets change channel |
-//! | R/F | 3 | sync — how often the whole wall shows one picture |
+//! | E/D | 2 | how often the sets retune |
+//! | R/F | 3 | sync — how often the whole wall shows one broadcast |
 //! | T/G | 4 | interference — snow, tracking, lost vertical hold |
 //! | Y/H | 5 | set size — a few large sets or a bank of portables |
-//! | U/J | 6 | colour spread |
+//! | U/J | 6 | colour spread — also how far footage is graded to the palette |
 //! | I/K | 7 | beat depth (half-time) |
 
 use bevy::asset::embedded_asset;
 use bevy::prelude::*;
+use bevy::sprite_render::MeshMaterial2d;
 use fete_core::prelude::*;
+use fete_video::VideoWall;
 
 /// Must match `TerebiParams` in `terebi.wgsl`.
 #[derive(ShaderType, Debug, Clone, Copy, Default)]
@@ -49,7 +74,12 @@ pub struct TerebiParams {
     /// What this sync window does: `0.0` puts every set on the same broadcast
     /// at its own scale, `1.0` spreads one picture across the whole wall.
     pub wall_mode: f32,
-    pub _pad0: f32,
+    /// How many layers of the video texture hold a picture.
+    ///
+    /// Zero — the default, and the case on any machine without clips or
+    /// without `ffmpeg` — means the shader never reaches for the texture and
+    /// the wall plays the nine synthesised channels alone.
+    pub video_slots: f32,
 }
 
 /// Where the programme clock wraps.
@@ -62,7 +92,12 @@ pub struct TerebiParams {
 pub const PROGRAMME_WRAP: f32 = 512.0;
 
 /// How often a sync window may open, in beats.
-const SYNC_PERIOD: f32 = 32.0;
+///
+/// Twelve bars. The wall ganging up is the best thing this visual does and it
+/// is the one moment where every set changes at once, which means it is also
+/// the thing that decides whether the wall reads as a room of televisions or as
+/// one display cut into rectangles. Too often and it is the latter.
+const SYNC_PERIOD: f32 = 48.0;
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
 pub struct Terebi {
@@ -70,6 +105,12 @@ pub struct Terebi {
     globals: FeteGlobals,
     #[uniform(1)]
     params: TerebiParams,
+    /// One layer per decoder, re-pointed by [`follow_video_wall`]. `None` binds
+    /// Bevy's fallback texture, which is why the shader can sample it
+    /// unconditionally and gate on `video_slots` instead.
+    #[texture(2, dimension = "2d_array")]
+    #[sampler(3)]
+    video: Option<Handle<Image>>,
 }
 
 impl Material2d for Terebi {
@@ -95,7 +136,7 @@ impl Visual for Terebi {
         // equal while the rate is constant: computed from the clock, turning the
         // cut rate up rewrites what every set has *already* shown and the whole
         // wall jumps to a different point in the schedule.
-        self.params.programme += frame.knob_range(2, 0.02, 0.55) * dt;
+        self.params.programme += frame.knob_range(2, 0.012, 0.20) * dt;
         if self.params.programme >= PROGRAMME_WRAP {
             self.params.programme -= PROGRAMME_WRAP;
         }
@@ -120,7 +161,7 @@ impl Visual for Terebi {
         // before the next window, so the envelope is never interrupted.
         let window = (beats / SYNC_PERIOD).floor();
         let roll = hash11(window * 7.3 + frame.globals.seed * 31.0);
-        let target = if roll < frame.knob(3) * 0.55 {
+        let target = if roll < frame.knob(3) * 0.42 {
             let held = beats - window * SYNC_PERIOD;
             let hold = 4.0 + hash11(window * 13.9 + 3.3) * 20.0;
             (smoothstep(0.0, 1.0, held) * (1.0 - smoothstep(hold, hold + 2.0, held)))
@@ -168,12 +209,49 @@ fn hash11(p: f32) -> f32 {
     x.fract()
 }
 
+/// Points the material at the video wall, if the show has one.
+///
+/// `Option<Res<_>>`, because [`VideoPlugin`] installs nothing when there are no
+/// clips to play — which is the usual case. Terebi has to be a complete visual
+/// without it.
+///
+/// [`VideoPlugin`]: fete_video::VideoPlugin
+fn follow_video_wall(
+    wall: Option<Res<VideoWall>>,
+    mut materials: ResMut<Assets<Terebi>>,
+    surfaces: Query<&MeshMaterial2d<Terebi>, With<VisualSurface>>,
+) {
+    let Some(wall) = wall else {
+        return;
+    };
+
+    for handle in &surfaces {
+        let Some(mut material) = materials.get_mut(&handle.0) else {
+            continue;
+        };
+        if material.video.as_ref() != Some(&wall.texture) {
+            material.video = Some(wall.texture.clone());
+        }
+        // Read every frame rather than once: slots come live over the first
+        // fraction of a second as their decoders produce a first frame, and a
+        // set tuned to a layer that is still black would be a set that is
+        // switched on and showing nothing.
+        material.params.video_slots = wall.live_slots() as f32;
+    }
+}
+
 /// Registers Terebi with the show.
 pub struct TerebiPlugin;
 
 impl Plugin for TerebiPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/terebi.wgsl");
-        app.add_visual::<Terebi>();
+        app.add_visual::<Terebi>().add_visual_systems::<Terebi, _>(
+            Update,
+            // After `Animate`, which is where the material is written: both
+            // touch it, and taking it mutably twice in one frame costs an extra
+            // change-detection flag for nothing.
+            follow_video_wall.after(VisualSystems::Animate),
+        );
     }
 }

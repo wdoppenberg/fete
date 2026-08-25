@@ -12,6 +12,7 @@
       <sourceFolder url="file://$MODULE_DIR$/visuals/fete-visual-sprawl/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/visuals/fete-visual-kanban/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/visuals/fete-visual-yama/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/fete-video/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/visuals/fete-visual-kura/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/visuals/fete-visual-terebi/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />

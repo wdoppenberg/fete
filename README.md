@@ -14,6 +14,7 @@ seconds, so it belongs to the music without anyone driving it.
 ```
 crates/fete-core          the framework — clock, modulation, palette, camera rig, visual switching
 crates/fete-app           the shell — window, projector setup, keyboard control, HUD, captures
+crates/fete-video         clips decoded into an array texture, for Terebi's tenth channel
 visuals/fete-visual-sprawl Sprawl, an analytic megacity seen from a tower
 visuals/fete-visual-neon  Neon City, a raymarched city, low-poly and owned
 visuals/fete-visual-slime Slime, three physarum species in a cycle (compute)
@@ -39,6 +40,7 @@ cargo run -p fete-show --release -- --fullscreen --no-hud
 cargo run -p fete-show --release -- --start neon --manual
 cargo run -p fete-show --release -- --start yama --no-rotate   # hold one visual
 cargo run -p fete-show --release -- --quality low             # what a Pi renders
+cargo run -p fete-show --release -- --no-video               # no clips on the televisions
 ```
 
 ## Running unattended
@@ -413,49 +415,175 @@ Four things that were not obvious:
 ## Terebi
 
 テレビ, "television". A wall of 90s CRT sets stacked in a dark room, each one
-playing its own fragment of late-night Japanese broadcast: a studio with a
-caption running under it, an anime impact frame, a vertical shooter, a
-platformer, a pseudo-3d racer, a title card, a test card, and the ones showing
-nothing but snow. The only visual in the set shot indoors, and the only one
-where the light in the frame comes from objects in a room.
+playing its own fragment of late-night Japanese broadcast: 風雲!たけし城, a
+variety studio with a caption running under it, a quiz panel, ゲゲゲの鬼太郎,
+ドラゴンボール, and the ones showing nothing but snow. The only visual in the set
+shot indoors, and the only one where the light in the frame comes from objects
+in a room.
 
 The wall is **carved, not tiled**. A cell is cut in half along its longer side
-up to twice, each cut decided by a hash, and every rectangle that falls out is
-one set. Nothing is looked up from a neighbour, nothing overlaps, nothing is
-stored, and the sizes come out unequal for free — which matters more here than
-anywhere else in the show, because a grid of identical lit rectangles is exactly
-what this must not look like. The path the cuts took is the set's identity, and
-its size, channel, cut schedule, tube colour, whether it has lost vertical hold
-and whether it is even switched on all hang off that one number.
+up to three times, each cut decided by a hash, and every rectangle that falls
+out is one set. Nothing is looked up from a neighbour, nothing overlaps, nothing
+is stored, and the sizes come out unequal for free — which matters more here
+than anywhere else in the show, because a grid of identical lit rectangles is
+exactly what this must not look like. The path the cuts took is the set's
+identity, and its size, tube colour, cut schedule, whether it has lost vertical
+hold and whether it is switched on all hang off that one number.
 
-A picture is a **pure function of a coordinate in -1..1**, which is what pays
-for the best thing in it. Every so often the wall syncs. Half the time that
-means every set is handed the same channel and the same clock and plays it at
-its own scale — a shop window with every screen tuned to one broadcast. The
-other half, every set is handed the position of its own glass on the wall
-instead of its own local coordinate, and the same nine functions draw one
-enormous picture split across every screen, each piece still bulging through its
-own tube. That second one costs a `mix` on two floats and nothing else.
+Every so often the wall syncs. Half the time that means every set is handed the
+same feed and the same clock and plays it at its own scale — a shop window with
+every screen tuned to one broadcast. The other half, every set is handed the
+position of its own glass on the wall instead of its own picture coordinate, and
+one enormous picture is split across every screen, each piece still bulging
+through its own tube. That second one costs a `mix` on two floats and nothing
+else.
+
+### What is on it
+
+Footage, and only footage. This visual originally synthesised nine programmes
+in WGSL — a studio, an anime impact frame, a vertical shooter, a platformer, a
+pseudo-3d racer, a title card, a test card — each a pure function of a picture
+coordinate in `-1..1`, which is what made the wall-sync trick free. They have
+been removed. Every set that is switched on is playing a real broadcast.
+
+What is left of that idea is snow, which is not a programme: it is what a
+television does with no signal, and it covers the instant after a set retunes
+and the case where there are no feeds at all. **Clips are therefore no longer
+optional** — with no `ffmpeg`, no `./video` or `--no-video`, every set shows
+snow. That is an honest picture of a room full of untuned televisions, and it is
+not a crash, but it is not the visual either. `git log` has the nine channels if
+they are ever wanted back.
 
 Three things that were not obvious:
 
 - **The bezel has no light of its own.** It is unlit plastic; everything on it
   is thrown there by the tube, sampled once at the centre of the picture. That
-  is what makes a channel change, a wipe or a hit light the whole cabinet for an
-  instant — and an early version with a constant floor under that term put a
-  dull halo around every live set, which read as two dozen grey slabs hanging in
-  the black.
-- **Two sets on the same channel must not show the same picture.** Nine
-  channels over twenty sets means collisions constantly, and identical twins
-  three cabinets apart is the clearest possible tell that this is generated.
-  Mirroring the coordinate, zooming it slightly and shifting it off centre —
-  three lines in the dispatcher — does more for that than any amount of detail
-  inside the channels.
+  is what makes a cut or a hit light the whole cabinet for an instant — and an
+  early version with a constant floor under that term put a dull halo around
+  every live set, which read as two dozen grey slabs hanging in the black. The
+  room's own light has to be a *gradient* so the box has a top on it.
+- **The tube sits high in the cabinet.** Every television ever built puts its
+  speaker and its tuning controls below the screen, so the moulding there is
+  deeper than it is anywhere else. That asymmetry is most of what separates a
+  television from a monitor: a box with the picture centred in it reads as a
+  flat panel however it is lit.
 - **Scan lines belong to the tube, not to the screen.** They are drawn at the
   set's own pitch, and whether any survive is decided per set by how many pixels
   tall it is: under a couple of pixels per line they are faded out rather than
   sampled, because the alternative is a moiré that crawls across the wall. The
   curve is written to average one, so a set does not dim as it shrinks.
+
+### The clips
+
+The footage is the only thing in the show that depends on the world outside it,
+and it earns that here and nowhere else.
+
+```sh
+tools/fetch-clips.sh                 # ~60 MB into ./video, a few minutes
+cargo run -p fete-show --release
+cargo run -p fete-show --release -- --video ~/my-clips
+cargo run -p fete-show --release -- --no-video
+```
+
+The fetch pulls twenty-five segments of off-air VHS captures of Japanese
+television from the Internet Archive: 風雲!たけし城, オレたちひょうきん族, 笑っていいとも!,
+進ぬ!電波少年, quiz shows, off-air blocks, and anime — ゲゲゲの鬼太郎, おそ松くん,
+めぞん一刻, ドラゴンボール, クレヨンしんちゃん, デジモン, 超くせになりそう and a Sanrio
+kids' tape. 1985 to 1999, all of it domestic.
+
+Nothing is downloaded whole: the Archive serves range requests, so `ffmpeg`
+seeks to the timecode over the network and takes only the seventy-five seconds
+asked for, a couple of megabytes instead of the several hundred each tape
+weighs. Every clip is ffprobed after writing — a dropped connection leaves
+`ffmpeg` exiting zero with a truncated file that has no index in it, and a plain
+"file is non-empty" test calls that a cache hit forever. Re-running re-fetches
+whatever failed or came back short, and the Archive fails a couple of these on
+any given run.
+
+Two things were left out after looking at the frames. The general commercial
+compilations, because Japanese ad breaks suit this wall — short, saturated,
+graphic — but the compilations on the Archive are a lottery and the segments
+pulled came back with a Kodak ident in English, a New York skyline and a
+European location shoot in them. And 平成教育テレビ (1992), because the segments
+contain a performer in blackface, which early-90s Japanese variety used
+routinely and which is not something to discover three metres tall behind a DJ.
+
+`fete-video` runs sixteen `ffmpeg` subprocesses, one per slot, each looping its
+own share of the clips and piping raw RGBA into one layer of a `2d_array`
+texture. Decoding by subprocess rather than by linking libavcodec buys nothing
+back except simplicity, which is the whole point: there is no seeking, no audio,
+no container introspection and no synchronisation between slots, and `-re` makes
+ffmpeg pace its own output so a blocking read *is* the playback clock. All
+sixteen together measured at 3.6% of one core, because each spends nearly all of
+its time asleep.
+
+**Failure is the normal case.** No clips, no `ffmpeg`, no directory: one log
+line, no `VideoWall`, and the wall plays the nine synthesised channels — which
+is the visual as authored, not a degraded version of it. The shader gates on a
+slot count rather than on whether the texture is bound, so the binding can stay
+unconditional and fall back to Bevy's placeholder.
+
+Six things that took a capture each to find:
+
+- **`textureSampleLevel`, never `textureSample`.** The channel dispatch runs
+  inside `if cab < 0.0`, which is non-uniform control flow, where
+  implicit-derivative sampling is illegal and naga rejects the shader outright.
+- **Broadcast video is mid-grey everywhere** — a studio floor, a lit wall, a
+  face at forty per cent — and dropped in raw among channels that are mostly
+  black it reads as a hole cut in the wall. It needs a black point and a curve
+  that carries the top past 1.0 into the same bloom everything else lives in.
+- **Not a smoothstep for that curve.** It is the obvious choice and it plateaus:
+  everything above its upper edge arrives at one value, so a lit shirt or a
+  studio lamp comes out as a flat white shape with no modelling in it. A power
+  curve stays monotone all the way up and highlights still separate as they clip.
+- **Video is the exception to the per-set mirror.** Flipping a synthesised
+  channel is free variation; flipping a broadcast reverses the writing on it,
+  and a wall of backwards Japanese is invisible until it is the only thing
+  anyone can see. Video sets are pulled apart on zoom and framing instead.
+- **The tape's head-switching noise has to scale with the picture.** At a fixed
+  level it is the brightest thing on a set showing a night scene, so the wall
+  ends up with a row of bright stripes drawing the eye to exactly the sets that
+  should be reading as dark.
+- **Feeds are dealt by position, not by hash.** Two televisions three cabinets
+  apart showing the same clip is the clearest tell that a wall is generated, and
+  it is a birthday problem — draw thirty sets from a dozen feeds at random and a
+  collision is near certain. `rank` differs between every set in a cell and
+  between neighbouring cells, which makes the case the eye actually checks
+  provably different.
+
+The footage is broadcast television, uploaded to the Archive as preservation. It
+is not public domain and the Archive is not a licence. For a ticketed room,
+point `--video` at your own folder — anything `ffmpeg` reads works.
+
+### Switching off
+
+Whether a set is on is not a property of the set. An early version rolled it
+once per set and the wall became a still life: the dark ones were always the
+same dark ones, and after a minute the eye had the layout memorised and stopped
+looking. Each set now draws its own standby period, in beats and deliberately
+unrelated to the programme clock — how often somebody switches a television off
+has nothing to do with how often the ones that are on change channel, and
+hanging both on the same knob was what made twenty sets read as one machine.
+
+Sets go dark one at a time over minutes, and they do it properly: a CRT losing
+its supply collapses vertically first, so the picture folds into a bright line
+across the middle of the tube and that line shrinks to a dot which takes a
+second or two to die. Coming back is slower and the other way round — a cold
+tube takes a couple of seconds to reach brightness. It is the most recognisable
+thing a television does and it is the whole reason a set going dark reads as
+somebody switching it off rather than as a rectangle being masked out.
+
+The bug worth recording: the collapse was gated on the state having *changed*
+but not on how long ago. That condition stays true for the entire standby
+period, so every switched-off set on the wall held the collapsed line at five
+times brightness for a minute at a time — the brightest thing in the room, on
+exactly the sets that were supposed to be off.
+
+Most of the wall is dark at any moment, and that is the point. A projector
+cannot render black darker than the room already is, so contrast on a wall of
+lit rectangles is bought only by leaving most of them unlit — and a screen
+bright enough to light faces on the floor is too bright whatever it looks like
+on a laptop in the dark.
 
 ## Kura
 

@@ -13,6 +13,7 @@ workspace = true
 bevy = { workspace = true }
 fete-core = { workspace = true }
 fete-app = { workspace = true }
+fete-video = { workspace = true }
 
 [features]
 default = []

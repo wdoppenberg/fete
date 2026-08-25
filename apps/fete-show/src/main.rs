@@ -23,6 +23,7 @@ use fete_visual_kura::KuraPlugin;
 use fete_visual_neon::NeonPlugin;
 use fete_visual_slime::SlimePlugin;
 use fete_visual_sprawl::SprawlPlugin;
+use fete_video::VideoPlugin;
 use fete_visual_terebi::TerebiPlugin;
 use fete_visual_yama::YamaPlugin;
 
@@ -51,7 +52,16 @@ fn main() -> AppExit {
     let manual = args.manual;
     let rotate = args.rotate;
 
-    show(config)
+    let mut app = show(config);
+    // Terebi's video channel, if there is anything to feed it. Added here
+    // rather than inside `TerebiPlugin` because the clip directory is the
+    // operator's choice on the night, and because a visual should not reach out
+    // and decide what the app reads off the disk.
+    if let Some(dir) = args.video {
+        app.add_plugins(VideoPlugin::from_dir(dir));
+    }
+
+    app
         // The set. This order is what the autopilot cycles through and what the
         // digit keys select. Kanban sits away from the two city visuals so the
         // night never runs three Tokyo pieces back to back, and Yama — the one
@@ -173,6 +183,8 @@ struct Args {
     aspect: Option<f32>,
     /// `None` leaves the choice to `FETE_QUALITY` and then the adapter probe.
     quality: Option<Quality>,
+    /// Directory of clips for Terebi's video channel. `None` disables it.
+    video: Option<String>,
 }
 
 impl Args {
@@ -200,7 +212,9 @@ impl Args {
                  --bpm <n>        starting tempo (default 128)\n\
                  --start <id>     open on a named visual (sprawl, neon, yama, terebi, slime, kanban, kura)\n\
                  --quality <t>    high, medium or low (default: probe the GPU)\n\
-                 --render-scale <f>  fraction of the window to render at, 0.25-1.0\n"
+                 --render-scale <f>  fraction of the window to render at, 0.25-1.0\n\
+                 --video <dir>    clips for Terebi's televisions (default ./video)\n\
+                 --no-video       leave the televisions on the synthesised channels\n"
             );
             std::process::exit(0);
         }
@@ -214,6 +228,14 @@ impl Args {
             start: value("--start"),
             aspect: value("--aspect").and_then(|v| parse_aspect(&v)),
             quality: parse_quality(value("--quality"), value("--render-scale")),
+            // On by default, because `tools/fetch-clips.sh` writes here and
+            // there is nothing to configure once it has. An absent directory
+            // costs one log line — see `VideoPlugin`.
+            video: if has("--no-video") {
+                None
+            } else {
+                Some(value("--video").unwrap_or_else(|| "video".to_string()))
+            },
         }
     }
 }

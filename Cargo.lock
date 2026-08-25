@@ -2325,6 +2325,7 @@ dependencies = [
  "bevy",
  "fete-app",
  "fete-core",
+ "fete-video",
  "fete-visual-kanban",
  "fete-visual-kura",
  "fete-visual-neon",
@@ -2332,6 +2333,14 @@ dependencies = [
  "fete-visual-sprawl",
  "fete-visual-terebi",
  "fete-visual-yama",
+]
+
+[[package]]
+name = "fete-video"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -2388,6 +2397,7 @@ dependencies = [
  "bevy",
  "fete-app",
  "fete-core",
+ "fete-video",
 ]
 
 [[package]]

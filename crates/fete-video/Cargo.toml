@@ -1,0 +1,14 @@
+[package]
+name = "fete-video"
+description = "Decodes a handful of video clips into one array texture, for visuals that want a picture rather than a function."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+rand = { workspace = true }
