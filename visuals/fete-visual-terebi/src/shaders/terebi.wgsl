@@ -50,10 +50,16 @@ struct TerebiParams {
 // over two is the long tail: the occasional portable wedged between two big
 // sets, which is what stops the size distribution reading as "large or medium".
 const SPLITS: i32 = 3;
-// Barrel distortion of the tube face. The strongest single cue that these are
-// glass bottles and not flat panels — a rectangle with square corners reads as
-// an LCD however it is coloured.
-const CURVE: f32 = 0.10;
+// How far off-axis the wall is seen. The viewer stands in front of the middle
+// of it, so a set out at the edge shows its inward-facing side and one near the
+// centre shows almost none — which is what makes a stack of boxes out of what
+// would otherwise be a collage of rectangles. Zero here is a flat wall seen
+// dead on, and it is what this visual used to be.
+const PARALLAX: f32 = 0.62;
+// How far out of square a set can be stacked, on top of that. Without it the
+// cabinets nearest the middle of the wall are seen perfectly head-on and go
+// flat, and nobody has ever stacked twenty televisions this carefully.
+const TURN: f32 = 0.40;
 // Scan lines per tube. NTSC's, near enough; whether any of them survive to the
 // projector is decided per set, by how many pixels tall that set is.
 const LINES: f32 = 232.0;
@@ -71,6 +77,19 @@ fn box_fill(p: vec2<f32>, half: vec2<f32>) -> f32 {
 
 fn round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
     return box_fill(p, max(half - vec2<f32>(r), vec2<f32>(0.0))) - r;
+}
+
+// The silhouette of a rounded box swept along a segment — the outline of a
+// cabinet seen slightly off-axis, front face and the sides behind it together.
+//
+// This is a Minkowski sum of a convex shape with a line segment, and for that
+// the exact distance is the shape's own distance measured from the nearest
+// point on the segment. Two lines, no extra sdf evaluations, and it is what
+// buys the depth: the front face is `round_box` at the origin, the body is this,
+// and everything between the two is a side or a top.
+fn swept_box(p: vec2<f32>, half: vec2<f32>, r: f32, d: vec2<f32>) -> f32 {
+    let t = clamp(dot(p, d) / max(dot(d, d), 1e-6), 0.0, 1.0);
+    return round_box(p - d * t, half, r);
 }
 
 // The show's palette, never below zero.
@@ -327,23 +346,99 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // them is what stops the whole thing reading as one lit panel. The gap
     // varies per set: a uniform one is a grid however the sets are sized.
     let gap = min(set_half.x, set_half.y) * mix(0.07, 0.17, hash11(key * 61.3)) + 0.006;
-    let cab_half = max(set_half - gap, vec2<f32>(0.015));
+    var cab_half = max(set_half - gap, vec2<f32>(0.015));
+
+    // A television is never twice as tall as it is wide.
+    //
+    // The carve hands out rectangles of every shape — a cell cut once is a 2:1
+    // slot — and filling one of those edge to edge makes a cabinet nothing in
+    // the world has ever looked like: a 4:3 tube marooned in a field of bezel.
+    // Shrink to a plausible aspect inside the slot and centre it there. What is
+    // left over becomes wall, and a wall of televisions can always afford more
+    // wall.
+    //
+    // The odd one is a portrait arcade monitor stood on its end, which is the
+    // one shape that gets away with it.
+    let portrait = hd.y > 0.94;
+    let want = select(mix(1.14, 1.42, hash11(key * 29.3)), 0.80, portrait);
+    if cab_half.x / max(cab_half.y, 1e-4) > want {
+        cab_half.x = cab_half.y * want;
+    } else {
+        cab_half.y = cab_half.x / want;
+    }
+
+    // --- what decade this set is from ---------------------------------------
+    //
+    // Nobody buys twenty televisions at once. These came out of junk shops over
+    // twenty years, and one number decides how old each one looks: 0 is a
+    // wood-cased set from the sixties with a bulging tube and a bezel like a
+    // picture frame, 1 is a flat grey box from 1998.
+    //
+    // Everything it drives is correlated *on purpose*, which is the opposite of
+    // the rule the per-set hashes follow. A set with a deeply curved tube and a
+    // slim modern bezel does not read as variety, it reads as a bug — those
+    // things went together in the world and they have to go together here.
+    let era = hash11(key * 83.9 + 3.7);
+    let curve = mix(0.19, 0.045, era);
+    let deep = mix(1.7, 0.85, era);
 
     var q = f - set_center;
-    // Nobody stacked these straight.
-    q = rotate2(q, (ha.x - 0.5) * 0.055);
+    // Nobody stacked these straight, either.
+    q = rotate2(q, (ha.x - 0.5) * 0.075);
 
-    // Moulded plastic, so the corners are generously rounded and no two makes
-    // agree by how much.
-    let corner = min(cab_half.x, cab_half.y) * mix(0.14, 0.30, hd.x);
+    // Moulded plastic, and the older it is the more generous the radius.
+    let corner = min(cab_half.x, cab_half.y) * mix(0.30, 0.13, era);
     let cab = round_box(q, cab_half, corner);
 
+    // --- the box behind the front face --------------------------------------
+    //
+    // Where this set sits on the wall, normalised so the edges are about ±1.
+    // A point further from the viewer projects towards the centre of the frame,
+    // so the back of the cabinet is displaced *inward* — which puts the visible
+    // side face on the side nearest the middle of the wall, exactly as it would
+    // be in the room.
+    let wall_at = (cid + 0.5 + set_center) * size;
+    let off_axis = vec2<f32>(wall_at.x / max(0.5 * asp, 1e-3), wall_at.y * 2.0);
+
+    let depth = min(cab_half.x, cab_half.y) * deep;
+    let lean = -off_axis * PARALLAX + (hash22(vec2<f32>(key * 3.3, key * 77.1)) - 0.5) * TURN;
+    let body_off = lean * depth;
+    let body = swept_box(q, cab_half, corner, body_off);
+
     var col = vec3<f32>(0.0);
+
+    // The plastic. Wood-effect and cream at one end of the range, grey and
+    // near-black at the other, and never bright: this is a dark room and the
+    // cabinets are what the lit tubes read against.
+    let plastic = mix(vec3<f32>(1.0), tint(mix(0.08, 0.62, era) + hd.x * 0.12), 0.55)
+        * mix(0.55, 1.25, hash11(key * 8.3));
+
+    if body < 0.0 && cab >= 0.0 {
+        // --- the sides ------------------------------------------------------
+        //
+        // Facing away from the tube, so they get none of its light and only the
+        // room's. Which face this is decides how much: the top of a set below
+        // eye level catches the room, the underside of one above it is the
+        // darkest thing on the wall, and the left and right sides sit between.
+        // Getting that ordering right is most of what makes these read as boxes
+        // rather than as rectangles with a smear behind them.
+        let dq = abs(q) - cab_half;
+        var face = 0.42;
+        if dq.y > dq.x {
+            face = select(0.10, 1.0, q.y > 0.0);
+        }
+        // Falls off with distance behind the front face — an edge-on plastic
+        // side is not evenly lit along its length.
+        let along = clamp(dot(q, body_off) / max(dot(body_off, body_off), 1e-6), 0.0, 1.0);
+        col += plastic * face * (0.030 * (1.0 - along * 0.65) + 0.004);
+    }
 
     if cab < 0.0 {
         // The tube inside the moulding. A wide bezel and a small picture is a
         // portable; a narrow one is somebody's big set.
-        let bezel = min(cab_half.x, cab_half.y) * mix(0.10, 0.26, ha.y);
+        // A picture frame on an old set, a slim border on a late one, with
+        // enough jitter left that two sets of the same age are not twins.
+        let bezel = min(cab_half.x, cab_half.y) * mix(0.27, 0.09, era) * mix(0.85, 1.2, ha.y);
 
         // The apron: the extra moulding under the glass. Every television ever
         // built puts its speaker and its tuning controls below the screen, so
@@ -352,13 +447,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // most of what separates a television from a monitor — a box with the
         // picture in the middle of it reads as a flat panel however it is lit,
         // which is exactly what this wall must not look like.
-        let apron = bezel * mix(0.45, 1.9, hb.x);
+        let apron = bezel * mix(1.9, 0.5, era) * mix(0.8, 1.25, hb.x);
         var inner = max(
             vec2<f32>(cab_half.x - bezel, cab_half.y - bezel - apron * 0.5),
             vec2<f32>(0.008),
         );
-        // 4:3 — or, on the odd set, the 3:4 of an arcade monitor stood on end.
-        let ratio = select(4.0 / 3.0, 3.0 / 4.0, hd.y > 0.94);
+        // 4:3 — or, on the portrait sets, the 3:4 of an arcade monitor stood on
+        // end. The same draw the cabinet used, so the glass and the box it is
+        // in are never fighting each other.
+        let ratio = select(4.0 / 3.0, 3.0 / 4.0, portrait);
         if inner.x / inner.y > ratio {
             inner.x = inner.y * ratio;
         } else {
@@ -370,7 +467,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let screen_rise = vec2<f32>(0.0, apron * 0.5);
         let qt = q - screen_rise;
 
-        let tube = round_box(qt, inner, min(inner.x, inner.y) * 0.16);
+        // Old tubes are round-cornered bottles; late ones are nearly square.
+        let tube = round_box(qt, inner, min(inner.x, inner.y) * mix(0.30, 0.11, era));
         let s = qt / inner;
         // A pixel, in picture units. This is the number the whole visual is
         // filtered against: a set can be a third of the frame or forty pixels
@@ -429,7 +527,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let feed = select(spread_feed, wall_feed, synced);
 
         // The tube's curvature.
-        let cs = s * (1.0 + CURVE * dot(s, s));
+        let cs = s * (1.0 + curve * dot(s, s));
 
         // The same point, expressed as a position on the whole wall. Mixing
         // towards it is the entire sync mechanism: at 1.0 every set is handed
@@ -529,17 +627,33 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // Every tube is a different age and a different make. Brightness and
         // colour vary per set and neither follows the other.
         // Wide, and wider than looks reasonable written down. With more sets on
-        // the wall than there are channels, some of them are always showing the
-        // same programme as somebody else, and no amount of detail inside a
-        // channel fixes that — what fixes it is that the two sets are visibly
-        // different *televisions*. A tube twenty years old with a drifted
-        // colour balance next to a newer one is the cheapest way to say so, and
-        // it costs two hashes.
+        // the wall than there are feeds, some of them are always showing the
+        // same thing as somebody else, and no amount of detail in the picture
+        // fixes that — what fixes it is that the two sets are visibly different
+        // *televisions*. A tube twenty years old with a drifted colour balance
+        // next to a newer one is the cheapest way to say so.
         let gain = mix(0.60, 1.45, hash11(key * 3.9));
-        let tube_tint = mix(
-            vec3<f32>(1.0),
-            tint(0.25 + hash11(key * 6.1) * 0.55),
-            0.18 + 0.28 * spread,
+
+        // And some of them never had colour at all. A monochrome set in a wall
+        // of colour ones is the loudest possible way to say these came out of
+        // junk shops over twenty years rather than off one delivery lorry, and
+        // it costs a dot product. Tied to the era, because a black-and-white
+        // set with a 1997 bezel is not variety, it is a mistake.
+        //
+        // The phosphor is not neutral. P4 is a blue-white, and the older tubes
+        // went warm as they aged, so which way a given set is off is its own
+        // draw — a wall of identically tinted monochrome sets would be its own
+        // kind of wrong.
+        let mono = era < 0.24 && hash11(key * 97.3) > 0.42;
+        let phosphor = mix(
+            vec3<f32>(0.84, 0.90, 1.06),
+            vec3<f32>(1.06, 0.97, 0.80),
+            hash11(key * 11.9),
+        );
+        let tube_tint = select(
+            mix(vec3<f32>(1.0), tint(0.25 + hash11(key * 6.1) * 0.55), 0.18 + 0.28 * spread),
+            phosphor,
+            mono,
         );
         var flick = 1.0;
         let ailing = hash11(key * 71.9 + 4.7);
@@ -552,6 +666,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             let breath = sin(content_t * mix(4.0, 11.0, ailing) + key * 30.0) * 0.5 + 0.5;
             flick = 1.0 - breath * 0.10
                 - step(0.93, hash11(floor(content_t * 9.0) + key * 20.0)) * 0.12;
+        }
+        if mono {
+            pic = vec3<f32>(dot(max(pic, vec3<f32>(0.0)), vec3<f32>(0.2126, 0.7152, 0.0722)));
         }
         pic *= gain * tube_tint * flick;
         pic *= 1.0 - seam * 0.85;
@@ -602,9 +719,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
             // The plastic itself. Beige, grey or near-black depending on the
             // make, and a couple of orders under the picture.
-            let plastic = mix(vec3<f32>(1.0), tint(0.60 + hd.x * 0.25), 0.55)
-                * mix(0.55, 1.25, hash11(key * 8.3));
-
             var case_col = mix(vec3<f32>(1.0), tube_tint, 0.7)
                 * exp(-tube / max(bezel * 0.45, 1e-4)) * lum * 0.50;
 

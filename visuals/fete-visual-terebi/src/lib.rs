@@ -28,6 +28,17 @@
 //! That is an honest picture of a room full of untuned televisions and it is
 //! not a crash, but it is not the visual either.
 //!
+//! # The room
+//!
+//! The wall is seen from a point rather than dead on: a set out at the edge
+//! shows its inward-facing side, one near the centre shows almost none, and
+//! every set is turned slightly out of square on top of that. Each cabinet is a
+//! rounded box swept along a segment — the front face, and the sides behind it.
+//!
+//! One number per set decides what decade it is from, and it drives the tube's
+//! curvature, the bezel, the apron, the corner radii, the colour of the plastic
+//! and how deep the box is. About one set in seven never had colour.
+//!
 //! # The sync
 //!
 //! Every so often the wall gangs up. Half the time that means every set is

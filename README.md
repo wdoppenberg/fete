@@ -454,8 +454,50 @@ snow. That is an honest picture of a room full of untuned televisions, and it is
 not a crash, but it is not the visual either. `git log` has the nine channels if
 they are ever wanted back.
 
-Three things that were not obvious:
+### The cabinets
 
+The wall is seen from a point. The viewer stands in front of the middle of it,
+so a set out at the edge shows its inward-facing side and one near the centre
+shows almost none — a point further away projects towards the centre of the
+frame, so the back of a cabinet is displaced *inward* and the visible side face
+lands on the side nearest the middle of the wall, exactly as it would in the
+room. That one rule is what turns a collage of rectangles into a stack of boxes,
+and it costs one extra sdf evaluation: the body of a cabinet is a rounded box
+swept along a segment, which is a Minkowski sum, and the exact distance for that
+is the box's own distance measured from the nearest point on the segment.
+
+On top of it every set is turned slightly out of square, because otherwise the
+cabinets nearest the middle are seen perfectly head-on and go flat, and nobody
+has ever stacked twenty televisions that carefully.
+
+The sides face away from the tube, so they get none of its light and only the
+room's. Which face you are looking at decides how much: the top of a set below
+eye level catches the room, the underside of one above it is the darkest thing
+on the wall, and the left and right sides sit between. Getting that ordering
+right is most of what makes these read as boxes rather than as rectangles with a
+smear behind them.
+
+Five things that were not obvious:
+
+- **Nobody buys twenty televisions at once.** One number per set decides what
+  decade it came from: 0 is a wood-cased set from the sixties with a bulging
+  tube and a bezel like a picture frame, 1 is a flat grey box from 1998. It
+  drives the tube's curvature, the bezel and apron depth, the corner radii, the
+  cabinet colour and how deep the box is. Everything it touches is correlated
+  *on purpose* — the opposite of the rule the other per-set hashes follow —
+  because a deeply curved tube in a slim modern bezel does not read as variety,
+  it reads as a bug. Those things went together in the world.
+- **Some of them never had colour.** A monochrome set in a wall of colour ones
+  is the loudest possible way to say these came out of junk shops over twenty
+  years rather than off one delivery lorry, and it costs a dot product. Tied to
+  the era, and the phosphor is not neutral — P4 is a blue-white and the old
+  tubes went warm as they aged, so which way a given set is off is its own draw.
+- **A television is never twice as tall as it is wide.** The carve hands out
+  rectangles of every shape — a cell cut once is a 2:1 slot — and filling one of
+  those edge to edge makes a cabinet nothing in the world has ever looked like:
+  a 4:3 tube marooned in a field of bezel. The cabinet is shrunk to a plausible
+  aspect inside its slot and centred there; the leftover becomes wall, and a
+  wall of televisions can always afford more wall.
 - **The bezel has no light of its own.** It is unlit plastic; everything on it
   is thrown there by the tube, sampled once at the centre of the picture. That
   is what makes a cut or a hit light the whole cabinet for an instant — and an
@@ -467,11 +509,20 @@ Three things that were not obvious:
   deeper than it is anywhere else. That asymmetry is most of what separates a
   television from a monitor: a box with the picture centred in it reads as a
   flat panel however it is lit.
-- **Scan lines belong to the tube, not to the screen.** They are drawn at the
-  set's own pitch, and whether any survive is decided per set by how many pixels
-  tall it is: under a couple of pixels per line they are faded out rather than
-  sampled, because the alternative is a moiré that crawls across the wall. The
-  curve is written to average one, so a set does not dim as it shrinks.
+
+Scan lines belong to the tube and not to the screen: they are drawn at the set's
+own pitch, and whether any survive is decided per set by how many pixels tall it
+is. Under a couple of pixels per line they are faded out rather than sampled,
+because the alternative is a moiré that crawls across the wall, and the curve is
+written to average one so a set does not dim as it shrinks.
+
+**Why not real 3D models?** CC0 CRT meshes exist and are easy to find. Using one
+means adding `bevy_pbr` and `bevy_gltf` to a workspace whose `Cargo.toml`
+excludes them on purpose (roughly halving cold build times), a 3D camera rig
+beside the 2D one, video rendered to mesh screens, and a lit scene — and then
+the carve, the wall-sync trick and every per-set analytic detail have nowhere to
+live. It would be a different visual, not a better version of this one. The
+depth here is two extra sdf evaluations.
 
 ### The clips
 
