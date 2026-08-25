@@ -9,6 +9,8 @@
 //! Three mechanisms, on deliberately different timescales:
 //!
 //! - **Visual changes** every few dozen bars, through a bleed transition.
+//!   Rotation can be held ([`Autopilot::cycle_visuals`]) without giving up the
+//!   other two, for when one visual is right for the track that is playing.
 //! - **Palette changes** on a different, non-multiple period, so the
 //!   combination of visual and colour rarely repeats.
 //! - **Continuous parameter drift** — a slow random walk of every macro knob
@@ -49,6 +51,14 @@ pub struct Autopilot {
     /// incoming simulation has nothing to show for its first second) without
     /// going dark. Set this above zero to get the old behaviour back.
     pub fade_beats: f32,
+    /// Whether the autopilot changes visual at all.
+    ///
+    /// Off holds whatever is on screen while the palette still morphs and the
+    /// knobs still drift — the show keeps moving, but it stays on one piece.
+    /// That is what an operator wants when a visual happens to suit the track
+    /// that is playing, and it is the difference between taking the wheel and
+    /// switching the autopilot off entirely.
+    pub cycle_visuals: bool,
     /// Whether unpatched macros wander on their own.
     pub drift: bool,
     /// Beats between new drift destinations.
@@ -87,6 +97,7 @@ impl Default for Autopilot {
             visual_beats: 192.0,
             palette_beats: 260.0,
             fade_beats: 0.0,
+            cycle_visuals: true,
             drift: true,
             drift_beats: 64.0,
             drift_range: 0.3,
@@ -116,9 +127,19 @@ impl Autopilot {
     /// enabling at runtime so a change does not fire immediately.
     pub fn restart(&mut self, clock: &ShowClock) {
         let now = clock.beats;
-        self.next_visual_beat = now + self.visual_beats as f64;
         self.next_palette_beat = now + self.palette_beats as f64;
         self.next_drift_beat = now;
+        self.restart_visuals(clock);
+    }
+
+    /// Re-seed just the visual timer, for the same reason [`restart`] re-seeds
+    /// all of them: turning rotation back on part-way through a hold would
+    /// otherwise fire a change on the next frame, because the beat it was due
+    /// on went by while rotation was off.
+    ///
+    /// [`restart`]: Self::restart
+    pub fn restart_visuals(&mut self, clock: &ShowClock) {
+        self.next_visual_beat = clock.beats + self.visual_beats as f64;
         self.phase = Phase::Hold;
     }
 }
@@ -143,45 +164,55 @@ pub fn run_autopilot(
     let now = clock.beats;
 
     // --- visual changes ------------------------------------------------------
-    match autopilot.phase {
-        Phase::Hold => {
-            // With a fade configured the change starts early, so the fade is
-            // finished by the beat the change was due on.
-            let due = autopilot.next_visual_beat - autopilot.fade_beats.max(0.0) as f64;
-            if now >= due {
-                if autopilot.fade_beats > 0.0 {
-                    autopilot.phase = Phase::FadingOut;
-                } else {
-                    // Straight into the change, with nothing dipping: the
-                    // transition started by the switch itself is what covers
-                    // it, and it needs the outgoing frame at full level to
-                    // have anything worth keeping.
+    if !autopilot.cycle_visuals {
+        // Hold the current visual. The timer is re-seeded every frame rather
+        // than left to run, so switching rotation back on gives a full period
+        // before the next change instead of one that is already overdue — and
+        // the fade is released in case rotation was switched off mid-change,
+        // which would otherwise leave the screen stuck part-way to black.
+        autopilot.restart_visuals(&clock);
+        output.autofade = (output.autofade + clock.delta * 2.0).min(1.0);
+    } else {
+        match autopilot.phase {
+            Phase::Hold => {
+                // With a fade configured the change starts early, so the fade is
+                // finished by the beat the change was due on.
+                let due = autopilot.next_visual_beat - autopilot.fade_beats.max(0.0) as f64;
+                if now >= due {
+                    if autopilot.fade_beats > 0.0 {
+                        autopilot.phase = Phase::FadingOut;
+                    } else {
+                        // Straight into the change, with nothing dipping: the
+                        // transition started by the switch itself is what covers
+                        // it, and it needs the outgoing frame at full level to
+                        // have anything worth keeping.
+                        requests.write(VisualRequest::Cycle(1));
+                        autopilot.next_visual_beat = now + autopilot.visual_beats as f64;
+                    }
+                }
+            }
+            Phase::FadingOut => {
+                let remaining = (autopilot.next_visual_beat - now) as f32;
+                output.autofade = (remaining / autopilot.fade_beats.max(0.01)).clamp(0.0, 1.0);
+
+                if now >= autopilot.next_visual_beat {
+                    output.autofade = 0.0;
                     requests.write(VisualRequest::Cycle(1));
+                    autopilot.phase = Phase::FadingIn;
                     autopilot.next_visual_beat = now + autopilot.visual_beats as f64;
                 }
             }
-        }
-        Phase::FadingOut => {
-            let remaining = (autopilot.next_visual_beat - now) as f32;
-            output.autofade = (remaining / autopilot.fade_beats.max(0.01)).clamp(0.0, 1.0);
+            Phase::FadingIn => {
+                // The incoming visual needs a moment before it is worth showing —
+                // a simulation in particular has nothing on screen for its first
+                // second — so the fade back in is the same length as the fade out.
+                let elapsed =
+                    (now - (autopilot.next_visual_beat - autopilot.visual_beats as f64)) as f32;
+                output.autofade = (elapsed / autopilot.fade_beats.max(0.01)).clamp(0.0, 1.0);
 
-            if now >= autopilot.next_visual_beat {
-                output.autofade = 0.0;
-                requests.write(VisualRequest::Cycle(1));
-                autopilot.phase = Phase::FadingIn;
-                autopilot.next_visual_beat = now + autopilot.visual_beats as f64;
-            }
-        }
-        Phase::FadingIn => {
-            // The incoming visual needs a moment before it is worth showing —
-            // a simulation in particular has nothing on screen for its first
-            // second — so the fade back in is the same length as the fade out.
-            let elapsed =
-                (now - (autopilot.next_visual_beat - autopilot.visual_beats as f64)) as f32;
-            output.autofade = (elapsed / autopilot.fade_beats.max(0.01)).clamp(0.0, 1.0);
-
-            if output.autofade >= 1.0 {
-                autopilot.phase = Phase::Hold;
+                if output.autofade >= 1.0 {
+                    autopilot.phase = Phase::Hold;
+                }
             }
         }
     }
@@ -263,6 +294,85 @@ mod tests {
             .add_message::<VisualRequest>()
             .add_systems(Update, run_autopilot);
         app
+    }
+
+    /// Run one frame at a beat the visual timer is already past, and report
+    /// whether the autopilot asked for a change.
+    fn cycled(configure: impl FnOnce(&mut Autopilot)) -> bool {
+        let mut app = harness(1.0);
+        {
+            let mut autopilot = app.world_mut().resource_mut::<Autopilot>();
+            // Well past the first `visual_beats`, so a rotating autopilot is
+            // certain to fire on this frame.
+            autopilot.next_visual_beat = 0.0;
+            configure(&mut autopilot);
+        }
+        app.update();
+
+        let messages = app.world().resource::<Messages<VisualRequest>>();
+        let mut cursor = messages.get_cursor();
+        cursor.read(messages).count() > 0
+    }
+
+    #[test]
+    fn rotation_off_holds_the_visual() {
+        assert!(cycled(|_| {}), "the harness should cycle by default");
+        assert!(
+            !cycled(|autopilot| autopilot.cycle_visuals = false),
+            "rotation was off, so nothing should have asked for a new visual"
+        );
+    }
+
+    #[test]
+    fn rotation_resumes_with_a_full_period() {
+        let mut app = harness(1.0);
+        {
+            let mut autopilot = app.world_mut().resource_mut::<Autopilot>();
+            autopilot.cycle_visuals = false;
+            autopilot.next_visual_beat = 0.0;
+        }
+        // Time passes with rotation held...
+        app.update();
+        app.world_mut().resource_mut::<Autopilot>().cycle_visuals = true;
+        app.update();
+
+        // ...and switching it back on does not immediately fire the change that
+        // came due while it was off.
+        let messages = app.world().resource::<Messages<VisualRequest>>();
+        let mut cursor = messages.get_cursor();
+        assert_eq!(
+            cursor.read(messages).count(),
+            0,
+            "resuming rotation fired a change that was due while it was held"
+        );
+    }
+
+    #[test]
+    fn palette_and_drift_still_run_with_rotation_off() {
+        let mut app = harness(1.0);
+        {
+            let mut autopilot = app.world_mut().resource_mut::<Autopilot>();
+            autopilot.cycle_visuals = false;
+            autopilot.next_palette_beat = 0.0;
+        }
+        app.world_mut().resource_mut::<Macros>().snap(0, 0.9);
+        let palette_before = app.world().resource::<PaletteMorph>().to;
+        app.update();
+
+        // Holding the visual is not the same gesture as switching the autopilot
+        // off: the screen has to keep moving, or an hour on one piece is an hour
+        // of the same frame.
+        let macros = app.world().resource::<Macros>();
+        assert!(
+            (macros.target[0] - 0.9).abs() > 0.1,
+            "drift stopped when only rotation was held: {}",
+            macros.target[0]
+        );
+        assert_ne!(
+            app.world().resource::<PaletteMorph>().to,
+            palette_before,
+            "the palette change stopped when only rotation was held"
+        );
     }
 
     #[test]

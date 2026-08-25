@@ -103,6 +103,16 @@ pub fn sync_stage_settings(
         grade.wobble = template.wobble;
         grade.lift = template.lift;
         grade.aspect = template.aspect;
+        // The tilt-shift, which used to be missing here. The camera is spawned
+        // from `StageSettings` in `Startup` and an app's own look is applied in
+        // `Startup` too, so whether the tilt survived came down to which of the
+        // two the scheduler happened to run first — and when it lost, the
+        // effect was simply absent for the whole show with nothing to say so.
+        // Copying it makes the resource the single source of truth, and lets
+        // the focus band be moved at runtime.
+        grade.tilt = template.tilt;
+        grade.tilt_focus = template.tilt_focus;
+        grade.tilt_width = template.tilt_width;
     }
 }
 
@@ -112,5 +122,65 @@ fn bloom_from(settings: &StageSettings) -> Bloom {
         low_frequency_boost: settings.bloom_scatter,
         composite_mode: BloomCompositeMode::Additive,
         ..Bloom::NATURAL
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An app holding just what `sync_stage_settings` reads and writes.
+    fn harness() -> App {
+        let mut app = App::new();
+        app.init_resource::<StageSettings>()
+            .init_resource::<ClearColor>()
+            .add_systems(Update, sync_stage_settings);
+        app.world_mut().spawn((
+            StageCamera,
+            Bloom::default(),
+            Tonemapping::TonyMcMapface,
+            Grade::default(),
+        ));
+        app
+    }
+
+    #[test]
+    fn tilt_reaches_the_camera() {
+        // The regression: the camera is spawned from `StageSettings` during
+        // `Startup` and an app's own look is applied during `Startup` too, so
+        // an app that lost the ordering race got a camera with `tilt` still at
+        // its default of zero — and since the sync did not copy the tilt
+        // fields, nothing ever corrected it. The tilt-shift was simply absent.
+        let mut app = harness();
+        {
+            let mut settings = app.world_mut().resource_mut::<StageSettings>();
+            settings.grade.tilt = 6.0;
+            settings.grade.tilt_focus = 0.44;
+            settings.grade.tilt_width = 0.11;
+        }
+        app.update();
+
+        let mut cameras = app.world_mut().query::<&Grade>();
+        let grade = cameras.iter(app.world()).next().expect("no stage camera");
+        assert_eq!(grade.tilt, 6.0, "tilt did not reach the camera");
+        assert_eq!(grade.tilt_focus, 0.44);
+        assert_eq!(grade.tilt_width, 0.11);
+    }
+
+    #[test]
+    fn moving_the_focus_band_at_runtime_is_picked_up() {
+        // What `drift_focus` in the show depends on: writing the resource after
+        // startup has to reach the live camera, or the band cannot be animated.
+        let mut app = harness();
+        app.update();
+        app.world_mut()
+            .resource_mut::<StageSettings>()
+            .grade
+            .tilt_focus = 0.61;
+        app.update();
+
+        let mut cameras = app.world_mut().query::<&Grade>();
+        let grade = cameras.iter(app.world()).next().expect("no stage camera");
+        assert_eq!(grade.tilt_focus, 0.61);
     }
 }

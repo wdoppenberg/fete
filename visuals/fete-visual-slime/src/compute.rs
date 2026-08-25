@@ -22,7 +22,10 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use fete_core::prelude::*;
 use rand::Rng;
 
-use crate::{SLIME_FORMAT, SlimeConfig, SlimeMarker, SlimeParams, SlimeRun};
+use crate::{
+    GENE_MAX, SLIME_FORMAT, SLOTS_PER_TEXEL, SPECIES_COUNT, SlimeConfig, SlimeMarker, SlimeParams,
+    SlimeRun,
+};
 
 /// Threads per workgroup in the agent pass. 64 is one Apple/AMD wavefront and
 /// two NVIDIA warps — a safe default across the hardware a laptop VJ rig runs.
@@ -36,6 +39,10 @@ const GRID_WORKGROUP: u32 = 8;
 struct Agent {
     pos: [f32; 2],
     angle: f32,
+    /// Two things in one float: the integer part is the species (0, 1 or 2)
+    /// and never changes, the fractional part is the heritable trait and
+    /// drifts every frame. Packing both keeps the agent four floats wide,
+    /// which at two million agents is worth caring about.
     kind: f32,
 }
 
@@ -158,10 +165,15 @@ fn init_slime_pipelines(
         usage: BufferUsages::STORAGE,
     });
 
+    // Five slots per texel. Three are the per-species trails, which the
+    // simulation keeps apart all the way through and only the display pass
+    // combines. The other two are the running totals behind the trait field:
+    // a weighted mean needs both the weighted sum and the sum of the weights,
+    // and neither can be recovered from the other.
     let texel_count = (config.size.x * config.size.y) as u64;
     let deposits = render_device.create_buffer(&BufferDescriptor {
         label: Some("slime deposits"),
-        size: texel_count * size_of::<u32>() as u64,
+        size: texel_count * SLOTS_PER_TEXEL as u64 * size_of::<u32>() as u64,
         usage: BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
@@ -181,15 +193,26 @@ fn init_slime_pipelines(
 /// the visual has to look finished within a few seconds of being switched to
 /// mid-set. Uniform seeding has the network covering the frame in about three
 /// seconds and refining from there.
+///
+/// Species are dealt round-robin rather than drawn at random. The three are
+/// locked in a cycle where each hunts the next, and a cycle started from
+/// populations that already differ by a percent or two spends its first
+/// seconds resolving that imbalance instead of forming spirals.
 fn seed_agents(config: &SlimeConfig) -> Vec<Agent> {
     let mut rng = rand::rng();
     let size = config.size.as_vec2();
 
     (0..config.agent_count)
-        .map(|_| Agent {
-            pos: [rng.random::<f32>() * size.x, rng.random::<f32>() * size.y],
-            angle: rng.random_range(0.0..std::f32::consts::TAU),
-            kind: rng.random::<f32>(),
+        .map(|index| {
+            let species = (index % SPECIES_COUNT) as f32;
+            // Strictly below 1.0: a gene that reached it would carry into the
+            // integer part and silently change the agent's species.
+            let gene = rng.random::<f32>().min(GENE_MAX);
+            Agent {
+                pos: [rng.random::<f32>() * size.x, rng.random::<f32>() * size.y],
+                angle: rng.random_range(0.0..std::f32::consts::TAU),
+                kind: species + gene,
+            }
         })
         .collect()
 }

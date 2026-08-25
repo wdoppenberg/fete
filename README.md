@@ -16,9 +16,10 @@ crates/fete-core          the framework — clock, modulation, palette, camera r
 crates/fete-app           the shell — window, projector setup, keyboard control, HUD, captures
 visuals/fete-visual-sprawl Sprawl, an analytic megacity seen from a tower
 visuals/fete-visual-neon  Neon City, a raymarched city, low-poly and owned
-visuals/fete-visual-slime Slime, a physarum agent simulation (compute)
+visuals/fete-visual-slime Slime, three physarum species in a cycle (compute)
 visuals/fete-visual-kanban Kanban, Japanese neon signage floating past
 visuals/fete-visual-yama  Yama, a volcanic cone at dusk, circled slowly
+visuals/fete-visual-terebi Terebi, a wall of CRT sets playing late-night television
 visuals/fete-visual-kura  Kura, three flocks and the geometry between them
 apps/fete-show            the combined show: every visual, running itself
 ```
@@ -31,10 +32,12 @@ cargo run -p fete-visual-sprawl --release      # one visual, fast iteration
 cargo run -p fete-visual-kanban --release
 cargo run -p fete-visual-slime --release       # compute needs release
 cargo run -p fete-visual-yama --release
+cargo run -p fete-visual-terebi --release
 cargo run -p fete-visual-kura --release        # CPU sim, release is not optional
 cargo run -p fete-show --release               # the whole set, on autopilot
 cargo run -p fete-show --release -- --fullscreen --no-hud
 cargo run -p fete-show --release -- --start neon --manual
+cargo run -p fete-show --release -- --start yama --no-rotate   # hold one visual
 ```
 
 ## Running unattended
@@ -46,6 +49,13 @@ knob nothing else is driving. A single visual held for ten minutes is never
 quite the same twice, and a four-hour night does not loop.
 
 Press `C` to switch it off and take over.
+
+Rotation is separable from the rest of it. `V` — or `--no-rotate` at startup —
+pins the visual while the palette keeps morphing and the knobs keep drifting,
+which is what is wanted when one piece happens to suit the track that is
+playing: the screen stays on it without going static for as long as it stays
+there. The HUD reads `autopilot/held` while rotation is pinned, against
+`autopilot/192b` when it is running and `manual` when the whole thing is off.
 
 ## Bleed transitions
 
@@ -326,6 +336,53 @@ Four things that were not obvious:
   warmer kept, then normalised to a fixed luminance, so a palette decides the
   hue of the sunset and never how bright it is.
 
+## Terebi
+
+テレビ, "television". A wall of 90s CRT sets stacked in a dark room, each one
+playing its own fragment of late-night Japanese broadcast: a studio with a
+caption running under it, an anime impact frame, a vertical shooter, a
+platformer, a pseudo-3d racer, a title card, a test card, and the ones showing
+nothing but snow. The only visual in the set shot indoors, and the only one
+where the light in the frame comes from objects in a room.
+
+The wall is **carved, not tiled**. A cell is cut in half along its longer side
+up to twice, each cut decided by a hash, and every rectangle that falls out is
+one set. Nothing is looked up from a neighbour, nothing overlaps, nothing is
+stored, and the sizes come out unequal for free — which matters more here than
+anywhere else in the show, because a grid of identical lit rectangles is exactly
+what this must not look like. The path the cuts took is the set's identity, and
+its size, channel, cut schedule, tube colour, whether it has lost vertical hold
+and whether it is even switched on all hang off that one number.
+
+A picture is a **pure function of a coordinate in -1..1**, which is what pays
+for the best thing in it. Every so often the wall syncs. Half the time that
+means every set is handed the same channel and the same clock and plays it at
+its own scale — a shop window with every screen tuned to one broadcast. The
+other half, every set is handed the position of its own glass on the wall
+instead of its own local coordinate, and the same nine functions draw one
+enormous picture split across every screen, each piece still bulging through its
+own tube. That second one costs a `mix` on two floats and nothing else.
+
+Three things that were not obvious:
+
+- **The bezel has no light of its own.** It is unlit plastic; everything on it
+  is thrown there by the tube, sampled once at the centre of the picture. That
+  is what makes a channel change, a wipe or a hit light the whole cabinet for an
+  instant — and an early version with a constant floor under that term put a
+  dull halo around every live set, which read as two dozen grey slabs hanging in
+  the black.
+- **Two sets on the same channel must not show the same picture.** Nine
+  channels over twenty sets means collisions constantly, and identical twins
+  three cabinets apart is the clearest possible tell that this is generated.
+  Mirroring the coordinate, zooming it slightly and shifting it off centre —
+  three lines in the dispatcher — does more for that than any amount of detail
+  inside the channels.
+- **Scan lines belong to the tube, not to the screen.** They are drawn at the
+  set's own pitch, and whether any survive is decided per set by how many pixels
+  tall it is: under a couple of pixels per line they are faded out rather than
+  sampled, because the alternative is a moiré that crawls across the wall. The
+  curve is written to average one, so a set does not dim as it shrinks.
+
 ## Kura
 
 The one this all came from. VJ-FÊTE was a C++/OpenGL piece — three interacting
@@ -414,6 +471,7 @@ visual.
 | `Z` / `X` | master fade down / up |
 | `M` | freeze modulation |
 | `C` | autopilot on/off |
+| `V` | visual rotation on/off (palette and drift keep running) |
 | `/` or `F1` | HUD |
 | `\` or `F11` | fullscreen on the current monitor (`Esc` always exits) |
 | `.` or `F12` | save a still to `captures/` |
@@ -429,7 +487,8 @@ and leaves it alone for `Autopilot::release_seconds` (90s by default) before
 reclaiming it, picking up smoothly from wherever it was left. The HUD tags each
 knob `held`, `auto` or `~mod` so it is always clear who is driving what.
 
-`C` switches the autopilot off entirely and hands everything over.
+`C` switches the autopilot off entirely and hands everything over. `V` is the
+narrower version: it stops the visual changing and nothing else.
 
 ## Working on shaders
 
@@ -476,10 +535,66 @@ undone by accident:
 - **Scale hides geometry.** Boxes look like boxes up close. The fix for
   "low-poly" was not more detail per building, it was moving the camera until a
   building was a few pixels wide.
-- **Keep a simulation out of equilibrium.** Slime converges within a minute to
-  a configuration that satisfies its own rules and then stops being
-  interesting. Three slow oscillators on coprime periods keep moving the target
-  it is converging towards, so it is permanently mid-reorganisation.
+- **Make a simulation unable to settle, rather than stirring it.** Slime used
+  to converge within a minute to a configuration that satisfied its own rules
+  and then stop being interesting, and the fix was three slow oscillators
+  sweeping its parameters — which worked, but the motion belonged to the
+  oscillators. The better fix is structural, and Kura had it all along: an
+  interaction that is *not symmetric* has no energy function to minimise, so
+  there is no equilibrium to reach. Slime now runs two species on two trail
+  channels where one is drawn to the other's trail and the other is pushed off
+  its. Measured over half a second of simulation, the old version's rate of
+  change fell from 0.17 to 0.14 between five and forty seconds while the frame
+  emptied out; the new one holds 0.23 to 0.26 with the frame still full.
+- **A chase dissipates; only a cycle winds up.** Two species where one hunts
+  the other stops the simulation settling, but the front where they meet
+  wanders off and nothing brings it back — the frame stays a uniform carpet at
+  one scale. Three species where each hunts the next cannot resolve a point
+  where all three meet, so that point is pinned and the fronts wind around it.
+  Spirals tens of times the width of a filament, nucleating and annihilating in
+  pairs. Two conditions, both of which cost a rewrite to find: **fleeing must
+  outweigh chasing** (otherwise a texel holding all three is more attractive to
+  each of them than its own, and they pile onto the same filaments), and **the
+  species must read each other from much further away than they read
+  themselves** (the pattern's scale is set by the range over which they can
+  feel each other, so at one range you get colour fringing on shared tubes and
+  nothing more).
+- **Check the arithmetic of a random walk before blaming the model.** Slime's
+  heritable trait converged to the bottom of its range within a couple of
+  minutes. Four increasingly elaborate theories about selection — sharpen it,
+  reward rarity, make fitness depend on the cycle, change which traits are
+  heritable — all landed on the *same* mean of 0.02 and spread of 0.014, which
+  is the tell that the thing being adjusted is not the cause. It was the
+  mutation scaled by `dt` instead of `sqrt(dt)`: a random walk needs a Wiener
+  increment, which is what the Kuramoto oscillators next door already do and
+  say why. Eight times too little noise, and it lost to the averaging. The
+  arithmetic that found it was noticing the spread it settled at was exactly
+  the spread the mutation rate could support. All four "fixes" then measured
+  *better* removed than kept.
+- **A hash that is not centred will integrate.** `hash11` has a mean of 0.4956
+  over the arguments these shaders feed it. That is invisible in a one-shot
+  decision like breaking a tie between two sensors, but anything accumulating
+  it drifts — a heading gains a systematic curl, a random-walking trait loses
+  half its range over a few minutes. The difference of two independent samples
+  has mean exactly zero whatever the marginal's bias is.
+- **A beat kick aimed at a point is a source at that point.** Slime's downbeat
+  impulse pushed every agent away from the centre of the frame. The field
+  wraps, so what it evicted re-entered at the borders and never came back, and
+  the network slowly reorganised into arcs around a hole. Alternating the sign
+  bar to bar — out, then in — makes the net displacement zero over a pair and
+  the profile flat. Two details go with it: interpolate the heading along the
+  *shortest arc* (`agent.angle` accumulates without bound while `atan2` returns
+  `-PI..PI`, so a naive `mix` between them is a scramble, not a shove), and if
+  you exempt a disc at the centre from the kick, keep it tiny — an exempt zone
+  drains itself, because agents just outside are pushed away on the outward bar
+  and those inside are never pushed back in.
+- **Two networks tile a frame faster than one.** Splitting Slime's population
+  between two species left 36% of the frame black where the single-species
+  version had left 75%, at the same mesh pitch — enough lit area to cost real
+  contrast on a projector. Coverage is set by the scale of the mesh, not by how
+  long the trail is remembered: opening the sensor distance up put it back,
+  while shortening the decay made it worse (agents stop concentrating into
+  filaments and the field becomes a wash).
 - **Localise emissive detail.** A rooftop beacon applied to the whole roof face
   lit every tenth building as a flat red slab. Point lights need to be points.
 - **Filter sub-pixel detail, do not sample it.** Widen a feature to the pixel

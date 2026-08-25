@@ -112,10 +112,12 @@ fn render_hud(
 
     out.push_str(&format!(
         "fete  ·  {name}  [{position}]{}\n",
-        if autopilot.enabled {
-            format!("  autopilot/{:.0}b", autopilot.visual_beats)
-        } else {
-            "  manual".to_string()
+        match (autopilot.enabled, autopilot.cycle_visuals) {
+            (true, true) => format!("  autopilot/{:.0}b", autopilot.visual_beats),
+            // The knobs and the palette are still moving, so this is not
+            // `manual` — it says which part has been pinned and nothing else.
+            (true, false) => "  autopilot/held".to_string(),
+            (false, _) => "  manual".to_string(),
         }
     ));
 
@@ -195,7 +197,7 @@ fn render_hud(
 
     out.push_str(
         "\ntab visual · 1-9 select · space tap · [ ] bpm · p palette\n\
-         b blackout · z/x master · m freeze · c autopilot\n\
+         b blackout · z/x master · m freeze · c autopilot · v rotation\n\
          / hud · \\ fullscreen (esc exits) · . still\n",
     );
 

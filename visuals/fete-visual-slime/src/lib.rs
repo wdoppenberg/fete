@@ -1,4 +1,4 @@
-//! **Slime** — a physarum agent simulation on the GPU.
+//! **Slime** — three physarum species locked in a cycle, on the GPU.
 //!
 //! The visual that exercises the framework's compute scaffolding. Sprawl is a
 //! pure function of position and time; Slime has state — a few million agents
@@ -6,6 +6,15 @@
 //! to show that the [`Visual`] abstraction still holds when a visual is a
 //! simulation: the presentation is a fullscreen material exactly like Sprawl,
 //! and everything underneath is a plugin.
+//!
+//! The population is split between three species on three trail channels,
+//! coupled in a cycle: each is drawn to the trail of the one it hunts and
+//! pushed off the trail of the one that hunts it. Every agent also carries a
+//! heritable trait that drifts towards whatever is working around it. See the
+//! header of `slime.wgsl` for why — briefly, a cyclic interaction has no energy
+//! function to minimise and no winner, so the simulation has no settled state
+//! to find, and the meeting points it cannot resolve wind the fronts into
+//! spirals tens of times the width of a filament.
 //!
 //! # Knobs
 //!
@@ -33,6 +42,20 @@ use crate::compute::SlimeComputePlugin;
 /// Storage format for the trail texture. See the note in `slime.wgsl`.
 pub const SLIME_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
+/// How many species are in the cycle. Three is not a tuning choice: two give a
+/// chase that dissipates, and only a closed cycle produces a meeting point that
+/// cannot resolve — which is what winds the fronts into spirals. See the header
+/// of `slime.wgsl`.
+pub const SPECIES_COUNT: u32 = 3;
+
+/// Accumulator slots per texel: one trail per species, plus the two running
+/// totals the trait field's weighted mean needs. Must match `slime.wgsl`.
+pub const SLOTS_PER_TEXEL: u32 = SPECIES_COUNT + 2;
+
+/// Largest value the heritable gene may take. It lives in the fractional part
+/// of an agent's `kind`, so reaching 1.0 would change the agent's species.
+pub const GENE_MAX: f32 = 0.9995;
+
 /// Marker distinguishing this simulation's [`SimTextures`] from any other's.
 #[derive(Debug, Clone, Copy)]
 pub struct SlimeMarker;
@@ -51,10 +74,13 @@ impl Default for SlimeConfig {
     fn default() -> Self {
         Self {
             size: UVec2::new(1920, 1080),
-            // Roughly one agent per pixel. Denser looks like fog because every
-            // texel saturates; much sparser and the network never closes into
-            // continuous filaments.
-            agent_count: 2_000_000,
+            // Roughly 1.5 agents per pixel. Denser looks like fog because
+            // every texel saturates; much sparser and the network never closes
+            // into continuous filaments. Raised from one per pixel when the
+            // population went from two species to three — each one now gets a
+            // third of the agents rather than a half, and at the old count the
+            // individual networks were too sparse to close.
+            agent_count: 3_000_000,
         }
     }
 }
@@ -239,33 +265,34 @@ fn update_params(
     params.sensor_distance = knob(4, 3.0, 26.0);
     params.diffuse = 0.32;
 
-    // --- keep it out of equilibrium -----------------------------------------
+    // --- a nudge, no longer a driver -----------------------------------------
     //
-    // Left on fixed parameters this simulation *converges*. Within a minute or
-    // so the network finds a configuration that satisfies its own rules and
-    // then barely changes — which is precisely the state that is least
-    // interesting to look at. The good-looking phase is the first fifteen
-    // seconds, while the structure is still reorganising.
+    // A single-species physarum simulation on fixed parameters *converges*:
+    // every agent is climbing the same field it deposits into, so the whole
+    // system is descending one landscape and eventually reaches the bottom.
+    // This used to be papered over from out here, by sweeping the parameters
+    // hard enough that the network was permanently mid-reorganisation — which
+    // worked, but the motion belonged to the oscillators rather than to the
+    // organism.
     //
-    // So the parameters never hold still. Three slow oscillators on mutually
-    // prime periods continuously move the target the agents are converging
-    // towards, which keeps the network permanently mid-reorganisation without
-    // ever visibly "changing setting". The periods are in beats and are
-    // deliberately long — 37, 53 and 71 beats is roughly 17, 25 and 33 seconds
-    // — so no single cycle is perceptible and their sum does not repeat for
-    // over an hour.
+    // The dynamics in `slime.wgsl` now supply that themselves: two species
+    // coupled non-reciprocally have no landscape to descend, so there is
+    // nothing left for these to rescue. What is left of the wander is a small
+    // asymmetry in the conditions the two species are competing under —
+    // enough that the chase is run over slightly different ground every few
+    // minutes, not enough to be the reason anything moves. The periods are in
+    // beats and mutually prime — 37, 53 and 71 beats is roughly 17, 25 and 33
+    // seconds — so their sum does not repeat for over an hour.
     let wander = |period_beats: f32, phase: f32| {
         ((clock.beats as f32 / period_beats + phase) * std::f32::consts::TAU).sin()
     };
 
     // Sensor angle moves least: it decides what kind of organism this is, and
     // swinging it far enough to change that reads as a scene change.
-    params.sensor_angle *= 1.0 + 0.30 * wander(37.0, 0.0);
-    // Sensor distance moves most. It sets the scale of the mesh, so sweeping it
-    // makes the network continuously rebuild between fine lace and broad
-    // arteries — this is the one doing most of the work.
-    params.sensor_distance *= 1.0 + 0.45 * wander(53.0, 0.31);
-    params.move_speed *= 1.0 + 0.25 * wander(71.0, 0.62);
+    params.sensor_angle *= 1.0 + 0.14 * wander(37.0, 0.0);
+    // Sensor distance still moves most, since it sets the scale of the mesh.
+    params.sensor_distance *= 1.0 + 0.22 * wander(53.0, 0.31);
+    params.move_speed *= 1.0 + 0.12 * wander(71.0, 0.62);
 
     // Derived after the wander, so turn rate stays matched to sensor angle.
     // Agents that turn much faster than they can sense produce noise; much
@@ -275,21 +302,40 @@ fn update_params(
     // Deposit is chosen so the trail settles at a useful *scale*, not by
     // taste. A texel inside a tube receives roughly `deposit * concentration`
     // per frame and keeps `decay` of what it had, so it converges to
-    // `deposit * concentration / (1 - decay)`. With one agent per texel on
-    // average and tubes running perhaps eight times denser, this lands the
-    // equilibrium near 2.0 — comfortably inside the display's tone curve
-    // instead of pinned at its top, where every tube is the same white.
+    // `deposit * concentration / (1 - decay)`. This lands the equilibrium near
+    // 2.0 — comfortably inside the display's tone curve instead of pinned at
+    // its top, where every tube is the same white.
+    //
+    // The count is divided by the number of species: the population is split
+    // between them, they write into separate channels, and each channel has to
+    // reach 2.0 on its own. Getting this wrong is not just a brightness error —
+    // the crowd veto in the shader has thresholds pinned to this equilibrium,
+    // and it is now load-bearing twice over, since the same function decides
+    // whether a gene is copied. A trail calibrated to the wrong scale would
+    // either never saturate, in which case nothing ever stops being reinforced,
+    // or never stop being saturated, in which case nothing is ever copied and
+    // the trait field freezes.
     const TUBE_CONCENTRATION: f32 = 8.0;
     const TARGET_DENSITY: f32 = 2.0;
+    let species_share = 1.0 / SPECIES_COUNT as f32;
     let agents_per_texel =
-        config.agent_count as f32 / (config.size.x * config.size.y).max(1) as f32;
+        config.agent_count as f32 * species_share / (config.size.x * config.size.y).max(1) as f32;
     params.deposit =
         TARGET_DENSITY * (1.0 - params.decay) / (agents_per_texel * TUBE_CONCENTRATION).max(0.01);
 
     // A radial kick on the beat, but only on the downbeat of each bar —
     // every beat would never let the network re-form.
+    //
+    // The sign alternates between bars, and the shader reads it as direction:
+    // out, then in, then out again. A kick that always pushed outward was a
+    // standing source at the centre of the frame, and since the field wraps,
+    // what it evicted re-entered at the borders — so the middle emptied over
+    // the course of a set. Pairing every outward bar with an inward one makes
+    // the net displacement zero.
+    let bar = (clock.beats / clock.beats_per_bar.max(1) as f64).floor() as i64;
+    let direction = if bar.rem_euclid(2) == 0 { 1.0 } else { -1.0 };
     params.impulse = if clock.bar_phase() < 0.12 {
-        (1.0 - clock.bar_phase() / 0.12) * audio.bass * 0.5
+        direction * (1.0 - clock.bar_phase() / 0.12) * audio.bass * 0.5
     } else {
         0.0
     };

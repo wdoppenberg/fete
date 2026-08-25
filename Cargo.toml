@@ -8,6 +8,7 @@ members = [
     "visuals/fete-visual-neon",
     "visuals/fete-visual-slime",
     "visuals/fete-visual-sprawl",
+    "visuals/fete-visual-terebi",
     "visuals/fete-visual-yama",
     "apps/fete-show",
 ]
@@ -31,6 +32,7 @@ fete-visual-kura = { path = "visuals/fete-visual-kura" }
 fete-visual-neon = { path = "visuals/fete-visual-neon" }
 fete-visual-slime = { path = "visuals/fete-visual-slime" }
 fete-visual-sprawl = { path = "visuals/fete-visual-sprawl" }
+fete-visual-terebi = { path = "visuals/fete-visual-terebi" }
 fete-visual-yama = { path = "visuals/fete-visual-yama" }
 
 # Deliberately not `default`: no PBR, glTF, animation, audio or picking. A

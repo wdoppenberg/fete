@@ -22,15 +22,23 @@ fn default_patch(mut macros: ResMut<Macros>, mut modulation: ResMut<Modulation>)
     macros.snap(1, 0.28); // sensor angle — narrow, so filaments run long
     macros.snap(2, 0.35); // move speed
     macros.snap(3, 0.35); // decay
-    macros.snap(4, 0.30); // sensor distance
+    macros.snap(4, 0.50); // sensor distance (see the modulator below)
     macros.snap(5, 0.45); // filament edges
     macros.snap(6, 0.40); // colour spread
     macros.snap(7, 0.55); // beat reactivity
 
     modulation.amount = 1.0;
     // Sensor distance on a very slow cycle. It sets the scale of the mesh, so
-    // sweeping it makes the network continuously reorganise between fine lace
-    // and broad arteries — the visual never settles into one image.
+    // sweeping it moves the network between fine lace and broad arteries.
+    //
+    // Centred much higher than it used to be — `bias` is the value the knob
+    // sits at, and 0.18 with a depth of 0.55 spent most of the cycle clamped
+    // against zero, i.e. at the finest mesh the simulation can make. That was
+    // right when one network had the frame to itself. Two of them tile it at
+    // the same pitch, and at the old bias the result was 36% black where the
+    // single-species version had been 75%: too much of the frame lit to hold
+    // contrast on a projector. Opening the pitch up puts coverage back where
+    // it was without touching the dynamics.
     modulation.patch(
         Modulator::new(
             4,
@@ -39,7 +47,7 @@ fn default_patch(mut macros: ResMut<Macros>, mut modulation: ResMut<Modulation>)
                 beats: 64.0,
             },
         )
-        .with_depth(0.55)
-        .with_bias(0.18),
+        .with_depth(0.35)
+        .with_bias(0.45),
     );
 }

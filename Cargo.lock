@@ -2330,6 +2330,7 @@ dependencies = [
  "fete-visual-neon",
  "fete-visual-slime",
  "fete-visual-sprawl",
+ "fete-visual-terebi",
  "fete-visual-yama",
 ]
 
@@ -2373,6 +2374,15 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-sprawl"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "fete-app",
+ "fete-core",
+]
+
+[[package]]
+name = "fete-visual-terebi"
 version = "0.1.0"
 dependencies = [
  "bevy",

@@ -35,6 +35,12 @@ struct NeonParams {
     pitch: f32,
     _pad0: f32,
     _pad1: f32,
+    // Traffic signals, one street to an entry: (travel, brake, queue, unused).
+    // Integrated on the CPU as a ring of coupled oscillators — see `Signals` in
+    // `lib.rs`. A shader has no memory, so a signal cycle derived here could
+    // only ever be a periodic function of time; state coming in from outside is
+    // what lets the signals influence each other.
+    signals: array<vec4<f32>, 32>,
 }
 
 @group(2) @binding(0) var<uniform> globals: Globals;
@@ -48,6 +54,18 @@ const INSET: f32 = 0.10;
 // up, so the city has no visible edge.
 const MAX_DIST: f32 = 78.0;
 const MARCH_STEPS: i32 = 110;
+// A long lens. A wide angle from altitude exaggerates the perspective and makes
+// the city look like a small model directly below; a narrow one keeps the blocks
+// near-parallel and the city reading as large.
+const LENS: f32 = 0.85;
+// How much further the lens throws red than blue, as a fraction of its focal
+// length. About two pixels at the edge of the frame — a car lamp is only a few
+// across, so this is already enough to fringe one, and much more separates it
+// into three coloured dots and reads as a fault rather than as a lens.
+const ABERRATION: f32 = 0.0020;
+// Streets this far apart share a traffic signal. Over a hundred blocks, so the
+// haze has closed in long before the repeat could be seen.
+const SIGNALS_PER_AXIS: f32 = 16.0;
 
 struct CityHit {
     t: f32,
@@ -170,14 +188,168 @@ fn march_city(ro: vec3<f32>, rd: vec3<f32>, max_steps: i32) -> CityHit {
     return out;
 }
 
+// What the air over the city looks like, and the single most load-bearing
+// colour in the frame: at this view distance most of the picture is seen
+// through some depth of it.
+//
+// Kept close to neutral. Haze at night is the city's own light scattered back,
+// which is a dim warm grey — taking the palette's hue at full strength instead
+// laid a saturated wash over the entire far field, and a wash that covers
+// everything reads as a filter on the lens rather than as distance. A fifth of
+// the saturation is enough that it is not grey.
+fn haze_color() -> vec3<f32> {
+    let tint = max(palette(globals, 0.12 + globals.seed), vec3<f32>(0.0));
+    return saturate_color(tint, 0.20) * 0.010;
+}
+
+// Ray through a pixel, for a lens of the given focal length.
+fn view_ray(fwd: vec3<f32>, right: vec3<f32>, up: vec3<f32>, screen: vec2<f32>, lens: f32) -> vec3<f32> {
+    return normalize(fwd + right * screen.x * lens - up * screen.y * lens);
+}
+
+// Where a ray meets the ground, shaded.
+fn road_under(ro: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+    let p = ro + dir * (-ro.y / min(dir.y, -1e-4));
+    return road(p, floor(p.xz));
+}
+
 fn sky(rd: vec3<f32>) -> vec3<f32> {
     // Almost nothing, with the city's glow bleeding up off the horizon. A night
     // sky over a city is not black, but it is very close, and every unit of
     // light here is contrast taken from the lights below.
     let horizon = pow(1.0 - clamp(abs(rd.y) * 2.2, 0.0, 1.0), 3.0);
     let up = clamp(rd.y, 0.0, 1.0);
-    return max(palette(globals, 0.12 + globals.seed), vec3<f32>(0.0)) * horizon * 0.05
+    return haze_color() * horizon * 3.0
         + vec3<f32>(0.003, 0.004, 0.008) * (1.0 - up * 0.7);
+}
+
+// One lane of traffic: a lattice of slots sliding past the pixel, and what the
+// cars in them put on the road.
+//
+// Nothing is simulated. `slots` is position along the street in a frame that
+// moves with the traffic, so a car keeps its slot index for good and every hash
+// of that index is stable for as long as the car is on screen — which is what
+// lets a car have a size and a place in its slot at all.
+struct Lane {
+    // Distance along the street, in slots.
+    slots: f32,
+    // Distance from this lane's centre line, in blocks. Signed, but nothing
+    // here is asymmetric across the lane, so only its magnitude is used.
+    across: f32,
+    // Slots to the block, so that beam lengths can be written in blocks.
+    density: f32,
+    // Separates the two directions, and one street from the next.
+    salt: f32,
+    occupancy: f32,
+    platoon_k: f32,
+    platoon_phase: f32,
+    // How far the traffic has closed up, 0..1.
+    queue: f32,
+}
+
+// A car's lamps, and separately the light they spill on the road. Kept apart
+// because only the first is small and hot enough to be worth dispersing through
+// the lens.
+struct CarLight {
+    lamp: f32,
+    spill: f32,
+}
+
+fn traffic_lane(lane: Lane) -> CarLight {
+    // Which platoon this pixel is looking at. Platoons are counted in the frame
+    // that moves with the traffic, so a car belongs to one for good.
+    let group = floor(lane.slots * lane.platoon_k + lane.platoon_phase);
+    // Where its front is — the stop line it will be held at.
+    let front = (group + 0.72 - lane.platoon_phase) / lane.platoon_k;
+
+    // Queueing, as a warp of the road rather than a move of each car. Standing
+    // traffic closes up towards the front of its platoon; the same cars at
+    // speed are strung out over several times the distance. Moving each car
+    // would carry it out of reach of the two slots a pixel looks at, and the
+    // lattice is what gives a car its identity, so the *coordinate* contracts
+    // about the front instead and the lattice is left alone.
+    let close = 1.0 - 0.42 * lane.queue;
+    let s = front + (lane.slots - front) / close;
+    let base = floor(s);
+
+    var out: CarLight;
+    out.lamp = 0.0;
+    out.spill = 0.0;
+
+    // A pixel is lit by the car in its own slot and by the one ahead throwing
+    // its beam back over the slot boundary, so two slots are enough.
+    for (var k = 0; k < 2; k++) {
+        let slot = base + f32(k);
+
+        // Platoons. Traffic leaves a signal in a group and arrives at the next
+        // one as a group, so a street is a run of cars and then empty road.
+        //
+        // Measured against this pixel's own platoon and deliberately not
+        // wrapped: the contraction reaches back over the platoon behind, and
+        // letting the window run off its ends is what stops that platoon being
+        // drawn a second time in the wrong place.
+        let win = slot * lane.platoon_k + lane.platoon_phase - group;
+        let gate = smoothstep(0.0, 0.10, win) * (1.0 - smoothstep(0.58, 0.80, win));
+
+        // Whether this slot carries a car at all. The gaps this leaves are the
+        // point: an unbroken train of dashes reads as a moving texture, and it
+        // is only once the stream has holes in it that the lights read as
+        // separate vehicles.
+        if hash11(slot * 1.13 + lane.salt) >= lane.occupancy * gate {
+            continue;
+        }
+
+        // Where in its slot the car sits — enough jitter to break the lattice,
+        // not enough to let it cross into a neighbour's slot and be missed.
+        let jitter = (hash11(slot * 2.71 + lane.salt + 4.3) - 0.5) * 0.6;
+
+        // Blocks ahead of the car as they land on screen: out of the warped
+        // slot coordinate, back through the contraction, into blocks. Working
+        // in the units the road is actually drawn in is what keeps a car the
+        // same size stopped as it is moving.
+        let ahead = (s - (slot + 0.5 + jitter)) * close / lane.density;
+        let side = abs(lane.across);
+
+        // One car in fifteen is a truck. Bigger lamps and a longer reach, so
+        // that the eye has a single vehicle to follow down the street rather
+        // than a run of identical marks.
+        let big = step(0.93, hash11(slot * 5.17 + lane.salt + 9.1));
+
+        // The lamps. Small, hot, and the only part of a car with a hard edge —
+        // at this range this dot and the little it throws is the whole vehicle.
+        let lamp_l = mix(0.026, 0.040, big);
+        let lamp_w = mix(0.022, 0.034, big);
+        let lamp = exp(-(ahead * ahead) / (lamp_l * lamp_l) - (side * side) / (lamp_w * lamp_w));
+
+        // The beam, thrown forward and spreading as it goes. This is what a car
+        // actually contributes to a night street from above — a short wedge of
+        // lit tarmac in front of it, not a mark on the road. A flat band was
+        // the previous version and it read as a printed dash, because a light
+        // with no falloff and no spread is not a light, it is a rectangle.
+        //
+        // Kept shorter than the gap between cars. Reaching further is what a
+        // headlight really does, but on a street this dense every beam then
+        // laps the car in front and the lane fuses into one continuous lit
+        // ribbon — which loses both the cars and the black the frame is built
+        // on. Seen from directly above, most of a beam is not pointed at you
+        // anyway.
+        let reach = max(ahead, 0.0);
+        let spread = 0.028 + reach * 0.20;
+        let beam = exp(-reach * mix(8.0, 6.0, big))
+            * exp(-(side * side) / (spread * spread))
+            * (1.0 - smoothstep(0.0, 0.03, -ahead))
+            * 0.45;
+
+        // And the pool immediately under it: light off the tarmac, going every
+        // way at once. Tight and weak, and it is what stops the beam looking
+        // like it was cut out of paper.
+        let pool = exp(-(ahead * ahead) / 0.020 - (side * side) / 0.007) * 0.22;
+
+        out.lamp += lamp * mix(1.0, 1.5, big);
+        out.spill += (beam + pool) * mix(1.0, 1.4, big);
+    }
+
+    return out;
 }
 
 // Roadway: the glowing grid, and the traffic on it.
@@ -188,25 +360,89 @@ fn road(p: vec3<f32>, cell: vec2<f32>) -> vec3<f32> {
     }
 
     // Which way this street runs. Cells can be both, at a junction.
-    let runs_z = (cell.y - 7.0 * floor(cell.y / 7.0)) < 1.0;
-    let along = select(p.z, p.x, runs_z);
-    let across = select(fract(p.x), fract(p.z), runs_z);
+    let runs_x = (cell.y - 7.0 * floor(cell.y / 7.0)) < 1.0;
+    let along = select(p.z, p.x, runs_x);
+    let across = select(fract(p.x), fract(p.z), runs_x);
 
-    // Sodium street lighting, brightest at the kerb.
-    let kerb = 1.0 - smoothstep(0.0, 0.45, abs(across - 0.5));
-    var lit = vec3<f32>(0.9, 0.62, 0.30) * (0.04 + kerb * 0.09);
+    // A street's identity is the coordinate it does *not* vary along. Seeding
+    // from the cell instead — which changes every block as you move down the
+    // street — gives each block its own independent phase, and the traffic
+    // comes out as an even scatter of dots that all move in lockstep rather
+    // than as streams with anywhere to go.
+    let street_id = select(cell.x * 0.73 + 41.7, cell.y * 1.31, runs_x) + globals.seed * 17.0;
 
-    // Traffic: dashes of light sliding along the street, two streams running
-    // opposite ways — warm one direction, cold the other, the way headlights
-    // and tail lights separate from the air. This is the single detail that
-    // stops an aerial city looking like a printed circuit board.
-    let flow = globals.time * 1.5 + hash11(cell.x * 13.1 + cell.y * 7.7) * 10.0;
-    let lane_a = pow(fract(along * 0.85 - flow), 24.0);
-    let lane_b = pow(fract(along * 0.7 + flow * 0.8 + 0.5), 24.0);
-    let side_a = 1.0 - smoothstep(0.06, 0.3, abs(across - 0.34));
-    let side_b = 1.0 - smoothstep(0.06, 0.3, abs(across - 0.66));
-    lit += vec3<f32>(1.0, 0.85, 0.6) * lane_a * side_a * 2.4;
-    lit += vec3<f32>(0.5, 0.7, 1.0) * lane_b * side_b * 2.0;
+    // Class. Most streets are quiet and a few are arterials — faster, fuller,
+    // better lit. Without this every street carries identical traffic and the
+    // grid reads as texture; with it there are bright rivers running through a
+    // dim city, which is both what one looks like from the air and something
+    // for the eye to follow across the frame.
+    let cls = hash11(street_id * 3.71 + 1.9);
+    let arterial = smoothstep(0.62, 0.92, cls);
+    // Floored well above zero: the hierarchy should be that a side street is
+    // quiet, not that it is closed. A street with no traffic at all reads as a
+    // gap in the city rather than as a quiet part of it.
+    let occupancy = mix(0.26, 0.85, smoothstep(0.12, 0.88, cls));
+    let density = mix(0.85, 1.25, arterial);
+    let platoon_k = mix(0.10, 0.055, arterial);
+
+    // Sodium street lighting. The lamps stand along both kerbs, so this is two
+    // soft rails with the carriageway darker between them.
+    //
+    // It was one falloff centred on the crown of the road, which peaks in the
+    // middle and fills the whole street with an even warm wash — the street
+    // then reads as a lit beige tube, the traffic has nothing to sit against,
+    // and a frame that is supposed to be mostly black is not. Two rails outline
+    // the block *better*, which was the point of having it at all.
+    let to_kerb = abs(across - 0.5);
+    let rail = 1.0 - smoothstep(0.0, 0.22, abs(to_kerb - 0.38));
+    var lit = vec3<f32>(0.9, 0.62, 0.30) * (0.022 + rail * 0.085) * mix(0.75, 1.35, cls);
+
+    // --- signals -------------------------------------------------------------
+    // How far this street's traffic has got, and how fast it is going, from the
+    // coupled oscillator driving it. Streets take turns rather than all
+    // flowing, and that — more than the lights themselves — is what makes a
+    // grid seen from the air read as a city rather than as a circuit board.
+    //
+    // The whole street shares one signal rather than one per junction. Per
+    // junction needs a queue, a queue needs a simulation, and the phase break
+    // at the stop line shows as a seam. From this height the difference is not
+    // visible; which streets are moving is.
+    let ord = floor(select(cell.x / 9.0, cell.y / 7.0, runs_x));
+    let ring = ord - SIGNALS_PER_AXIS * floor(ord / SIGNALS_PER_AXIS);
+    let sig_index = u32(ring) + select(u32(SIGNALS_PER_AXIS), 0u, runs_x);
+    let signal = params.signals[sig_index];
+
+    // Distance is carried at cruising speed and scaled here, so a street's
+    // class costs the simulation nothing — sixteen oscillators drive an
+    // unbounded number of streets. An arterial cruises about half again as
+    // fast as a side street, which is the real ratio and as far as it should
+    // be pushed: any wider and the arterials read as a different medium.
+    let travel = signal.x * mix(0.9, 1.4, arterial);
+
+    // Brake lights, decided with the rest of the traffic. Red at a standstill
+    // is the one thing in this frame that needs no explaining, and it is what
+    // tells you the lights are traffic rather than decoration.
+    let brake = signal.y;
+
+    // Two streams running opposite ways — warm one direction, cold the other,
+    // the way headlights and tail lights separate from the air. Both share the
+    // street's signal, because a green releases both.
+    let group_phase = hash11(street_id * 6.13 + 3.4);
+    let a = traffic_lane(Lane(
+        (along - travel) * density, across - 0.34, density,
+        street_id, occupancy, platoon_k, group_phase, signal.z));
+    let b = traffic_lane(Lane(
+        (-along - travel) * density, across - 0.66, density,
+        street_id + 19.7, occupancy, platoon_k, group_phase + 0.37, signal.z));
+
+    let warm = mix(vec3<f32>(1.0, 0.85, 0.6), vec3<f32>(1.0, 0.13, 0.05), brake * 0.85);
+    let cold = mix(vec3<f32>(0.5, 0.7, 1.0), vec3<f32>(1.0, 0.18, 0.07), brake * 0.85);
+
+    // The lamps run hot and the spill stays well under them. Tarmac lit by a
+    // headlight is never brighter than the headlight, and letting the spill
+    // come up to meet it is what turned these into slabs of light before.
+    lit += warm * (a.lamp * 2.0 + a.spill * 0.50);
+    lit += cold * (b.lamp * 1.7 + b.spill * 0.42);
 
     return lit;
 }
@@ -316,10 +552,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let fwd = normalize(vec3<f32>(params.yaw, params.pitch, 1.0));
     let right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), fwd));
     let up = cross(fwd, right);
-    // A long lens. A wide angle from altitude exaggerates the perspective and
-    // makes the city look like a small model directly below; a narrow one keeps
-    // the blocks near-parallel and the city reading as large.
-    let rd = normalize(fwd + right * screen.x * 0.85 - up * screen.y * 0.85);
+    let rd = view_ray(fwd, right, up, screen, LENS);
 
     var color: vec3<f32>;
     var dist = MAX_DIST;
@@ -332,8 +565,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if t_ground > 0.0 && t_ground < min(hit.t, MAX_DIST) {
         dist = t_ground;
-        let gp = ro + rd * t_ground;
-        color = road(gp, floor(gp.xz));
+
+        // Chromatic aberration, as the thing it actually is: a lens magnifies
+        // red a shade more than blue, so each channel gets its own focal
+        // length and the fringe falls out radially, widening towards the
+        // corners. Only the road is dispersed. It carries the traffic, which
+        // is the only thing in the frame small and bright enough for a fringe
+        // to register on, and it is reached by a plane intersection rather
+        // than by the march — running that three times would cost most of the
+        // frame to fringe buildings nobody could see it on.
+        let red = road_under(ro, view_ray(fwd, right, up, screen, LENS * (1.0 + ABERRATION)));
+        let green = road_under(ro, rd);
+        let blue = road_under(ro, view_ray(fwd, right, up, screen, LENS * (1.0 - ABERRATION)));
+        color = vec3<f32>(red.r, green.g, blue.b);
     } else if hit.hit {
         dist = hit.t;
         color = facade(hit, ro + rd * hit.t, lit_fraction);
@@ -342,13 +586,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         color = sky(rd);
     }
 
+    // Saturation belongs to the city, not to the air in front of it. Applied
+    // at the end it caught the haze too and drove the far field further from
+    // neutral the further away it was, which is the opposite of what distance
+    // does.
+    color = saturate_color(color, 1.3);
+
     // --- haze ----------------------------------------------------------------
     // Exponential, and the most important element in the frame after the lights
-    // themselves. It does the work of depth, it hides the far edge of the march
-    // so the city has no end, and the glow it accumulates over distance is what
-    // a real city looks like from the air.
-    let fog = max(palette(globals, 0.12 + globals.seed), vec3<f32>(0.0)) * 0.016
-        + vec3<f32>(0.003, 0.004, 0.007);
+    // themselves. It does the work of depth, and it hides the far edge of the
+    // march so the city has no end.
+    let fog = haze_color() + vec3<f32>(0.0035, 0.0038, 0.0050);
     color = mix(color, fog, 1.0 - exp(-dist * fog_density));
 
     // --- beat ----------------------------------------------------------------
@@ -358,7 +606,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // --- output --------------------------------------------------------------
     color *= knob_range(globals, 0u, 0.6, 2.4);
-    color = saturate_color(color, 1.3);
     color *= vignette(uv, 0.5);
     color *= globals.intensity;
 

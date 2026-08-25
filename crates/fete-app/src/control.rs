@@ -165,26 +165,44 @@ pub fn handle_macro_keys(
     }
 }
 
-/// Toggles the autopilot.
+/// Toggles the autopilot, and the visual rotation on its own.
 ///
 /// The show is expected to run unattended, so the autopilot is on by default
-/// and this exists to *stop* it — someone who walks up and starts turning
+/// and `C` exists to *stop* it — someone who walks up and starts turning
 /// knobs does not want an automatic visual change thirty seconds later.
+///
+/// `V` is the smaller version of that gesture, and the one wanted more often:
+/// it pins the visual while leaving the palette morph and the knob drift
+/// running, so a piece that happens to suit the track stays up without the
+/// screen going static for as long as it does.
 pub fn handle_autopilot_key(
     keys: Res<ButtonInput<KeyCode>>,
     clock: Res<ShowClock>,
     mut autopilot: ResMut<Autopilot>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyC) {
-        return;
+    if keys.just_pressed(KeyCode::KeyC) {
+        autopilot.enabled = !autopilot.enabled;
+        if autopilot.enabled {
+            // Restart the timers from now, so re-enabling does not immediately
+            // fire a change that was due while it was off.
+            autopilot.restart(&clock);
+        }
+        info!("autopilot {}", if autopilot.enabled { "on" } else { "off" });
     }
-    autopilot.enabled = !autopilot.enabled;
-    if autopilot.enabled {
-        // Restart the timers from now, so re-enabling does not immediately
-        // fire a change that was due while it was off.
-        autopilot.restart(&clock);
+
+    if keys.just_pressed(KeyCode::KeyV) {
+        autopilot.cycle_visuals = !autopilot.cycle_visuals;
+        // No `restart_visuals` here: `run_autopilot` re-seeds the timer for as
+        // long as rotation is off, so it is already counting from now.
+        info!(
+            "visual rotation {}",
+            if autopilot.cycle_visuals {
+                "on"
+            } else {
+                "held"
+            }
+        );
     }
-    info!("autopilot {}", if autopilot.enabled { "on" } else { "off" });
 }
 
 /// Palette selection.

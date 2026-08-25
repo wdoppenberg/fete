@@ -22,6 +22,7 @@ fete-visual-kura = { workspace = true }
 fete-visual-neon = { workspace = true }
 fete-visual-slime = { workspace = true }
 fete-visual-sprawl = { workspace = true }
+fete-visual-terebi = { workspace = true }
 fete-visual-yama = { workspace = true }
 
 [features]
@@ -33,5 +34,6 @@ hot-shaders = [
     "fete-visual-neon/hot-shaders",
     "fete-visual-slime/hot-shaders",
     "fete-visual-sprawl/hot-shaders",
+    "fete-visual-terebi/hot-shaders",
     "fete-visual-yama/hot-shaders",
 ]
