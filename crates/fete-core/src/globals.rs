@@ -12,6 +12,8 @@ use bevy::render::render_resource::ShaderType;
 
 use crate::clock::ShowClock;
 use crate::palette::Palette;
+use crate::present::StageResolution;
+use crate::quality::Quality;
 use crate::signal::{Audio, Macros};
 
 /// Per-frame state shared by every visual, laid out for a uniform buffer.
@@ -119,6 +121,10 @@ pub struct Frame<'a> {
     pub macros: &'a Macros,
     pub audio: &'a Audio,
     pub palette: &'a Palette,
+    /// How much this machine can be asked for. Visuals that scale a CPU-side
+    /// cost — a particle count, a trail length — read it here; shader loop
+    /// bounds go through `specialize` instead, so they stay constants.
+    pub quality: Quality,
 }
 
 impl Frame<'_> {
@@ -141,14 +147,15 @@ pub fn update_globals(
     audio: Res<Audio>,
     palette: Res<Palette>,
     output: Res<ShowOutput>,
-    windows: Query<&Window>,
+    stage: Res<StageResolution>,
 ) {
-    // Fall back to the previous resolution rather than zero when no window is
-    // present (headless capture, or the window is minimised) — a zero
-    // resolution turns every `uv / resolution` in a shader into a NaN.
-    if let Some(window) = windows.iter().next() {
-        globals.resolution = Vec2::new(window.width(), window.height());
-    }
+    // The stage size, not the window size: below full render scale the two
+    // differ, and a shader that thinks it has more pixels than it does draws
+    // scanlines and grain it cannot resolve. `StageResolution` already holds
+    // the last good value when the window is minimised, so there is nothing
+    // to guard against here — a zero would turn every `uv / resolution` into
+    // a NaN.
+    globals.resolution = stage.0;
 
     globals.time = clock.elapsed as f32;
     globals.delta = clock.delta;

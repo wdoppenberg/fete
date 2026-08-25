@@ -54,16 +54,52 @@ pub struct KanbanParams {
 pub const ZOOM_WRAP: f32 = 64.0;
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+#[bind_group_data(Tier)]
 pub struct Kanban {
     #[uniform(0)]
     globals: FeteGlobals,
     #[uniform(1)]
     params: KanbanParams,
+    /// Not a binding — the pipeline specialisation key.
+    tier: Tier,
+}
+
+impl From<&Kanban> for Tier {
+    fn from(visual: &Kanban) -> Self {
+        visual.tier
+    }
 }
 
 impl Material2d for Kanban {
     fn fragment_shader() -> ShaderRef {
         "embedded://fete_visual_kanban/shaders/kanban.wgsl".into()
+    }
+
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let tier = key.bind_group_data;
+        let Some(fragment) = descriptor.fragment.as_mut() else {
+            return Ok(());
+        };
+        fragment.shader_defs.extend(tier.shader_defs());
+        // Four parallax layers of signage, each an independent grid lookup
+        // with its own character SDF. The nearest layers carry the silhouette;
+        // the furthest is a haze of small marks that the bloom smears anyway.
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "LAYERS".into(),
+            tier.pick(4, 3, 2),
+        ));
+        // The air FBM runs on every pixel whether or not there is a sign on
+        // it. It is a slow brightness drift across the frame, and two octaves
+        // hold that shape.
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "AIR_OCTAVES".into(),
+            tier.pick(3, 2, 2),
+        ));
+        Ok(())
     }
 }
 
@@ -74,6 +110,10 @@ impl Visual for Kanban {
 
     fn globals_mut(&mut self) -> &mut FeteGlobals {
         &mut self.globals
+    }
+
+    fn set_quality(&mut self, quality: Quality) {
+        self.tier = quality.tier;
     }
 
     fn animate(&mut self, frame: &Frame) {

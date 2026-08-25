@@ -41,6 +41,8 @@ pub mod clock;
 pub mod globals;
 pub mod grade;
 pub mod palette;
+pub mod present;
+pub mod quality;
 pub mod signal;
 pub mod sim;
 pub mod stage;
@@ -57,6 +59,11 @@ use crate::clock::{ShowClock, advance_clock};
 use crate::globals::{FeteGlobals, ShowOutput, update_globals};
 use crate::grade::GradePlugin;
 use crate::palette::{Palette, PaletteMorph, advance_palette_morph};
+use crate::present::{
+    StageResolution, follow_stage_target, retarget_stage_camera, setup_stage_target,
+    track_stage_resolution,
+};
+use crate::quality::{Quality, detect_quality};
 use crate::signal::{Audio, Macros, Modulation, apply_modulation, simulate_audio};
 use crate::stage::{StageSettings, spawn_stage_camera, sync_stage_settings};
 use crate::visual::{
@@ -93,6 +100,8 @@ impl Plugin for FeteCorePlugin {
             .init_resource::<FeteGlobals>()
             .init_resource::<ShowOutput>()
             .init_resource::<StageSettings>()
+            .init_resource::<Quality>()
+            .init_resource::<StageResolution>()
             .init_resource::<Autopilot>()
             .init_resource::<VisualRegistry>()
             .init_resource::<VisualQuad>()
@@ -101,13 +110,28 @@ impl Plugin for FeteCorePlugin {
 
         app.add_plugins((BleedPlugin, GradePlugin));
 
-        app.add_systems(Startup, spawn_stage_camera);
+        // Strictly ordered: the probe may lower the tier, the tier decides
+        // whether there is a render target at all, and the camera has to be
+        // pointed at it before the first frame — a camera retargeted on frame
+        // two shows one frame of the wrong thing at every startup.
+        app.add_systems(
+            Startup,
+            (
+                detect_quality,
+                setup_stage_target,
+                spawn_stage_camera,
+                retarget_stage_camera,
+            )
+                .chain(),
+        );
 
         // Everything that defines "now" is resolved in `First`, so any system
         // in `Update` — framework or visual — reads a consistent frame.
         app.add_systems(
             First,
             (
+                track_stage_resolution,
+                follow_stage_target,
                 advance_clock,
                 advance_transition,
                 simulate_audio,

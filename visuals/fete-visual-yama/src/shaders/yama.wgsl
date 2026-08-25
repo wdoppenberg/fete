@@ -70,8 +70,9 @@ const MAX_R: f32 = 2.79;
 // flattening into the plain — which is what a stratovolcano is.
 const PROFILE: f32 = 1.3;
 
-const MARCH_STEPS: i32 = 48;
-const BISECT_STEPS: i32 = 6;
+// Both fed by the quality tier — see `Yama::specialize`.
+const MARCH_STEPS: i32 = #{MARCH_STEPS};
+const BISECT_STEPS: i32 = #{BISECT_STEPS};
 // Ray length beyond which nothing is resolved through the haze anyway.
 const MAX_DIST: f32 = 120.0;
 
@@ -781,7 +782,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let rr = reflect(rd, n);
 
         var mirror = backdrop(p, rr, warm, glow, cover, false);
+        // The second full march of the frame, and the reason a water pixel is
+        // the most expensive pixel in the set: it pays for the mountain twice.
+        // What it buys is the cone's reflection in the lake, which the ripple
+        // normals have already broken into fragments and the airlight has
+        // already washed most of the way out.
+#ifdef NO_MOUNTAIN_REFLECTION
+        let rhit = Hit(0.0, false);
+#else
         let rhit = march_mountain(p, rr, 40.0);
+#endif
         if rhit.hit {
             let rp = p + rr * rhit.t;
             let m = shade_mountain(rp, rr, rhit.t + dist, warm, snow_line);

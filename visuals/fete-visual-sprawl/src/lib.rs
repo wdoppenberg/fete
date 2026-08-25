@@ -45,16 +45,52 @@ pub struct SprawlParams {
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+#[bind_group_data(Tier)]
 pub struct Sprawl {
     #[uniform(0)]
     globals: FeteGlobals,
     #[uniform(1)]
     params: SprawlParams,
+    /// Not a binding — the pipeline specialisation key.
+    tier: Tier,
+}
+
+impl From<&Sprawl> for Tier {
+    fn from(sprawl: &Sprawl) -> Self {
+        sprawl.tier
+    }
 }
 
 impl Material2d for Sprawl {
     fn fragment_shader() -> ShaderRef {
         "embedded://fete_visual_sprawl/shaders/sprawl.wgsl".into()
+    }
+
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let tier = key.bind_group_data;
+        let Some(fragment) = descriptor.fragment.as_mut() else {
+            return Ok(());
+        };
+        fragment.shader_defs.extend(tier.shader_defs());
+        // The march is the expensive half: every one of these steps runs a
+        // full FBM before it can reject a cell, so the step count multiplies
+        // the octave count below rather than adding to it.
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "BLOCK_STEPS".into(),
+            tier.pick(64, 40, 24),
+        ));
+        // Blocks sit on a 10-unit grid, so 24 steps still crosses 240 units —
+        // far enough that the fog has closed long before the march gives up.
+        // That is why this visual, unlike Neon, needs no matching fog change.
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "BUILT_UP_OCTAVES".into(),
+            tier.pick(3, 2, 2),
+        ));
+        Ok(())
     }
 }
 
@@ -65,6 +101,10 @@ impl Visual for Sprawl {
 
     fn globals_mut(&mut self) -> &mut FeteGlobals {
         &mut self.globals
+    }
+
+    fn set_quality(&mut self, quality: Quality) {
+        self.tier = quality.tier;
     }
 
     fn animate(&mut self, frame: &Frame) {

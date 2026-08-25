@@ -12,6 +12,7 @@
 //! cargo run -p fete-show --release -- --aspect 16:9        # a different screen
 //! cargo run -p fete-show --release -- --start neon --manual
 //! cargo run -p fete-show --release -- --start yama --no-rotate  # one visual, still alive
+//! cargo run -p fete-show --release -- --quality low       # what the Pi renders
 //! ```
 
 use bevy::prelude::*;
@@ -42,6 +43,9 @@ fn main() -> AppExit {
     }
     if let Some(aspect) = args.aspect {
         config = config.with_aspect(aspect);
+    }
+    if let Some(quality) = args.quality {
+        config = config.with_quality(quality);
     }
 
     let manual = args.manual;
@@ -167,6 +171,8 @@ struct Args {
     bpm: f32,
     start: Option<String>,
     aspect: Option<f32>,
+    /// `None` leaves the choice to `FETE_QUALITY` and then the adapter probe.
+    quality: Option<Quality>,
 }
 
 impl Args {
@@ -192,7 +198,9 @@ impl Args {
                  --no-rotate      hold one visual; palette and knobs still move\n\
                  --aspect <r>     mask output to a shape, as `4:3` or `1.777`\n\
                  --bpm <n>        starting tempo (default 128)\n\
-                 --start <id>     open on a named visual (sprawl, neon, yama, terebi, slime, kanban, kura)\n"
+                 --start <id>     open on a named visual (sprawl, neon, yama, terebi, slime, kanban, kura)\n\
+                 --quality <t>    high, medium or low (default: probe the GPU)\n\
+                 --render-scale <f>  fraction of the window to render at, 0.25-1.0\n"
             );
             std::process::exit(0);
         }
@@ -205,6 +213,38 @@ impl Args {
             bpm: value("--bpm").and_then(|v| v.parse().ok()).unwrap_or(128.0),
             start: value("--start"),
             aspect: value("--aspect").and_then(|v| parse_aspect(&v)),
+            quality: parse_quality(value("--quality"), value("--render-scale")),
+        }
+    }
+}
+
+/// Builds the quality override, if either flag was given.
+///
+/// A `--render-scale` on its own is honoured against the default tier rather
+/// than rejected: wanting a softer image without also cheapening every shader
+/// is a reasonable thing to ask for on the night.
+fn parse_quality(tier: Option<String>, scale: Option<String>) -> Option<Quality> {
+    let tier = tier.map(|raw| {
+        Tier::parse(&raw).unwrap_or_else(|| {
+            eprintln!("--quality `{raw}` is not one of high, medium, low");
+            std::process::exit(2);
+        })
+    });
+    let scale = scale.map(|raw| {
+        raw.trim().parse::<f32>().unwrap_or_else(|_| {
+            eprintln!("--render-scale `{raw}` is not a number");
+            std::process::exit(2);
+        })
+    });
+
+    match (tier, scale) {
+        (None, None) => None,
+        (tier, scale) => {
+            let mut quality = Quality::new(tier.unwrap_or_default());
+            if let Some(scale) = scale {
+                quality = quality.with_render_scale(scale);
+            }
+            Some(quality)
         }
     }
 }

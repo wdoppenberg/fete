@@ -26,6 +26,8 @@ use bevy::shader::ShaderRef;
 
 use crate::clock::ShowClock;
 use crate::globals::ShowOutput;
+use crate::present::StageResolution;
+use crate::quality::Quality;
 
 /// Show-wide grade, attached to the stage camera.
 #[derive(Component, ExtractComponent, ShaderType, Debug, Clone, Copy)]
@@ -73,6 +75,22 @@ pub struct Grade {
     pub tilt_focus: f32,
     /// Half-height of the fully sharp region, in uv.
     pub tilt_width: f32,
+    /// How many taps the tilt-shift blur spends per pixel.
+    ///
+    /// Owned by the quality tier, not by the look: [`update_grade`] overwrites
+    /// it every frame, so setting it by hand does nothing. It is a field on the
+    /// uniform rather than a shader def because a `FullscreenMaterial`
+    /// specialises only on its target format — there is no hook to push defs
+    /// through — and it is on *this* struct rather than
+    /// [`FeteGlobals`](crate::globals::FeteGlobals) because this one can safely
+    /// grow.
+    ///
+    /// The blur is the most expensive thing the rig does to a frame that has
+    /// already been tonemapped: at ten taps, plus three for the chroma split,
+    /// every pixel of every visual pays thirteen texture reads before it
+    /// reaches the screen. Three taps still reads as defocus on material this
+    /// soft; it is the cheapest large saving in the framework.
+    pub tilt_taps: f32,
 }
 
 impl Default for Grade {
@@ -95,6 +113,7 @@ impl Default for Grade {
             tilt: 0.0,
             tilt_focus: 0.55,
             tilt_width: 0.12,
+            tilt_taps: 10.0,
         }
     }
 }
@@ -148,19 +167,17 @@ impl Plugin for GradePlugin {
 fn update_grade(
     clock: Res<ShowClock>,
     output: Res<ShowOutput>,
-    windows: Query<&Window>,
+    stage: Res<StageResolution>,
+    quality: Res<Quality>,
     mut grades: Query<&mut Grade>,
 ) {
-    let resolution = windows
-        .iter()
-        .next()
-        .map(|w| Vec2::new(w.width(), w.height()));
+    let taps = quality.tier.pick(10.0, 6.0, 3.0);
 
     for mut grade in &mut grades {
-        if let Some(resolution) = resolution {
-            grade.resolution = resolution;
-        }
+        // The pass runs at the stage's resolution, so that is what it is told.
+        grade.resolution = stage.0;
         grade.time = clock.elapsed as f32;
         grade.level = output.level();
+        grade.tilt_taps = taps;
     }
 }

@@ -52,7 +52,8 @@ struct SprawlParams {
 // Buildings with real vertical relief sit on their own coarse grid. Coarse
 // keeps the march cheap: a ray crosses few cells even looking to the horizon.
 const BLOCK_CELL: f32 = 10.0;
-const BLOCK_STEPS: i32 = 64;
+// Fed by the quality tier — see `Sprawl::specialize`.
+const BLOCK_STEPS: i32 = #{BLOCK_STEPS};
 const BLOCK_MAX_HEIGHT: f32 = 30.0;
 
 // The colour of city light. Overwhelmingly cool — fluorescent and LED interiors
@@ -91,7 +92,12 @@ fn sky(rd: vec3<f32>) -> vec3<f32> {
 // buildings stand where the lights are dense rather than being scattered
 // independently of them.
 fn built_up(p: vec2<f32>) -> f32 {
-    return smoothstep(-0.55, 0.45, fbm2(p * 0.006, 3));
+    // Called once per march step, so its octave count is multiplied by
+    // `BLOCK_STEPS` — by far the largest single term in this shader's cost.
+    // Dropping to two octaves loses the finest variation in where the city is
+    // dense, which is a scale the fog has already swallowed at the distances
+    // the march spends most of its steps on.
+    return smoothstep(-0.55, 0.45, fbm2(p * 0.006, #{BUILT_UP_OCTAVES}));
 }
 
 // Which way a neighbourhood's light leans, as an offset along the palette.

@@ -228,7 +228,7 @@ impl FlowField {
     }
 
     /// Draw the smear, oldest first.
-    pub fn emit(&self, out: &mut MeshBuf, brightness: f32) {
+    pub fn emit(&self, out: &mut MeshBuf, brightness: f32, budget: usize) {
         // What the tail beyond the kept history would have contributed, had the
         // buffer kept fading. Folded into the oldest sample rather than
         // dropped, so a still line reaches the same brightness it used to.
@@ -243,7 +243,8 @@ impl FlowField {
 
         for cell in 0..CELLS {
             let mut total = 0.0;
-            for (age, weight) in weights.iter_mut().enumerate().take(self.filled) {
+            let kept = self.filled.min(budget.max(1));
+            for (age, weight) in weights.iter_mut().enumerate().take(kept) {
                 let slot = (self.head + FLOW_HISTORY - age) % FLOW_HISTORY;
                 let alpha = self.history[cell * FLOW_HISTORY + slot].alpha;
                 let decay = if age == FLOW_HISTORY - 1 {

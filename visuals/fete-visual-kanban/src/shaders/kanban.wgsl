@@ -33,7 +33,8 @@ struct KanbanParams {
 @group(2) @binding(0) var<uniform> globals: Globals;
 @group(2) @binding(1) var<uniform> params: KanbanParams;
 
-const LAYERS: i32 = 4;
+// Fed by the quality tier — see `Kanban::specialize`.
+const LAYERS: i32 = #{LAYERS};
 // The zoom counter wraps here rather than growing all night. Its integer part
 // seeds the layers and its fractional part positions them, and an f32 carrying
 // hours of octaves has too little left over for the fraction — the flight
@@ -511,7 +512,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // hole punched in the image; a trace of the palette's far end reads as air.
     // Textured and an order of magnitude below the dimmest sign, so it can
     // never be mistaken for a lifted black.
-    let air = fbm2(p * 1.6 + vec2<f32>(t * 0.02, -t * 0.015), 3) * 0.5 + 0.5;
+    // Runs on every pixel, sign or no sign, so it is one of the few costs
+    // here that no early-out avoids. Fed by the quality tier.
+    let air = fbm2(p * 1.6 + vec2<f32>(t * 0.02, -t * 0.015), #{AIR_OCTAVES}) * 0.5 + 0.5;
     color += max(palette(globals, globals.seed + 0.55), vec3<f32>(0.0)) * air * 0.012;
 
     // Deliberately a lower range than the other visuals top out at. This one

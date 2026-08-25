@@ -297,20 +297,58 @@ fn hash01(i: u32) -> f32 {
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+#[bind_group_data(Tier)]
 pub struct Neon {
     #[uniform(0)]
     globals: FeteGlobals,
     #[uniform(1)]
     params: NeonParams,
+    /// Not a binding — the pipeline specialisation key. Changing it rebuilds
+    /// the shader with different loop bounds.
+    tier: Tier,
     /// Signal state. Lives here rather than in a resource because it is only
     /// ever touched by `animate`, and it is packed into `params` on the way
     /// out.
     signals: Signals,
 }
 
+impl From<&Neon> for Tier {
+    fn from(neon: &Neon) -> Self {
+        neon.tier
+    }
+}
+
 impl Material2d for Neon {
     fn fragment_shader() -> ShaderRef {
         "embedded://fete_visual_neon/shaders/neon.wgsl".into()
+    }
+
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let tier = key.bind_group_data;
+        let Some(fragment) = descriptor.fragment.as_mut() else {
+            return Ok(());
+        };
+        fragment.shader_defs.extend(tier.shader_defs());
+        // Steps and draw distance move together, and the shader pulls the
+        // fog in by the same ratio. Cutting the steps alone would stop the
+        // buildings early while leaving the roads and the haze where they
+        // were, which reads as a bald patch rather than as a smaller city.
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "MARCH_STEPS".into(),
+            tier.pick(110, 80, 56),
+        ));
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "MAX_DIST".into(),
+            tier.pick(78, 62, 48),
+        ));
+        if tier != Tier::High {
+            fragment.shader_defs.push("CHEAP_ROAD".into());
+        }
+        Ok(())
     }
 }
 
@@ -321,6 +359,10 @@ impl Visual for Neon {
 
     fn globals_mut(&mut self) -> &mut FeteGlobals {
         &mut self.globals
+    }
+
+    fn set_quality(&mut self, quality: Quality) {
+        self.tier = quality.tier;
     }
 
     fn animate(&mut self, frame: &Frame) {

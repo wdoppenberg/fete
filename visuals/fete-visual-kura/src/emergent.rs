@@ -166,10 +166,10 @@ impl Emergent {
     }
 
     /// White lines first, then the filled triangles over them.
-    pub fn emit(&self, out: &mut MeshBuf, heavy: &[Boid], brightness: f32) {
+    pub fn emit(&self, out: &mut MeshBuf, heavy: &[Boid], brightness: f32, budget: KuraBudget) {
         let colour = [brightness, brightness, brightness];
 
-        for link in self.links.iter().take(MAX_LINKS) {
+        for link in self.links.iter().take(budget.links) {
             let a = heavy[link.i as usize];
             let b = heavy[link.j as usize];
             // Localised around A, so a link across the seam is drawn as the
@@ -185,7 +185,7 @@ impl Emergent {
             );
         }
 
-        for tri in self.tris.iter().take(MAX_TRIS) {
+        for tri in self.tris.iter().take(budget.tris) {
             let a = heavy[tri.a as usize];
             let b = heavy[tri.b as usize];
             let c = heavy[tri.c as usize];

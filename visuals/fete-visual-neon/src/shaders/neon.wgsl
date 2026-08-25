@@ -51,9 +51,26 @@ const MAX_HEIGHT: f32 = 9.0;
 // Gap between a block and its cell boundary — the pavement.
 const INSET: f32 = 0.10;
 // Far enough that the haze has taken over completely before the march gives
-// up, so the city has no visible edge.
-const MAX_DIST: f32 = 78.0;
-const MARCH_STEPS: i32 = 110;
+// up, so the city has no visible edge. Shortened by the quality tier, with the
+// fog pulled in to match — see `REFERENCE_DIST`.
+const MAX_DIST: f32 = f32(#{MAX_DIST});
+// The draw distance this visual was tuned at. A cheaper tier draws less city,
+// and the fog is thickened so the haze still closes before the city runs out —
+// otherwise the buildings stop while the roads and the haze carry on past them,
+// which reads as a bald patch rather than as a smaller city.
+//
+// The square root is the whole trick. Thickening the fog by the full ratio
+// makes the haze reach the same value at the new limit, but it also doubles it
+// everywhere nearer, and the city vanishes into grey. Half the exponent closes
+// the far field most of the way while leaving the near field close to where it
+// was tuned, which is the half of the frame anyone is actually looking at.
+const REFERENCE_DIST: f32 = 78.0;
+// Longest loop in the repo, and the reason this visual is the second most
+// expensive: cells are one unit across, so a near-horizontal ray genuinely
+// burns every step reaching MAX_DIST. Fed by the quality tier — see
+// `Neon::specialize`. Shortening it pulls the far haze closer rather than
+// putting an edge on the city, because the march gives up into fog either way.
+const MARCH_STEPS: i32 = #{MARCH_STEPS};
 // A long lens. A wide angle from altitude exaggerates the perspective and makes
 // the city look like a small model directly below; a narrow one keeps the blocks
 // near-parallel and the city reading as large.
@@ -545,7 +562,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let screen = centered(uv, globals.resolution);
 
     let lit_fraction = knob_range(globals, 1u, 0.05, 0.28);
-    let fog_density = knob_range(globals, 5u, 0.016, 0.075);
+    let fog_density = knob_range(globals, 5u, 0.016, 0.075) * sqrt(REFERENCE_DIST / MAX_DIST);
 
     // --- camera --------------------------------------------------------------
     let ro = vec3<f32>(params.sway, params.height, params.drift);
@@ -574,10 +591,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // to register on, and it is reached by a plane intersection rather
         // than by the march — running that three times would cost most of the
         // frame to fringe buildings nobody could see it on.
+#ifdef CHEAP_ROAD
+        // One shading pass instead of three. The fringe is the first thing to
+        // go on weak hardware: it is two pixels wide at the frame edge, it is
+        // gone entirely under the grade's own chroma split, and it costs twice
+        // the whole road pass to keep.
+        color = road_under(ro, rd);
+#else
         let red = road_under(ro, view_ray(fwd, right, up, screen, LENS * (1.0 + ABERRATION)));
         let green = road_under(ro, rd);
         let blue = road_under(ro, view_ray(fwd, right, up, screen, LENS * (1.0 - ABERRATION)));
         color = vec3<f32>(red.r, green.g, blue.b);
+#endif
     } else if hit.hit {
         dist = hit.t;
         color = facade(hit, ro + rd * hit.t, lit_fraction);

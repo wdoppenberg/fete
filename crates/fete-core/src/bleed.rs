@@ -50,6 +50,7 @@ use bevy::render::view::{ExtractedView, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use crate::clock::ShowClock;
+use crate::present::StageResolution;
 
 /// How the outgoing frame leaves.
 ///
@@ -270,19 +271,13 @@ impl Default for Bleed {
 fn update_bleed(
     clock: Res<ShowClock>,
     transition: Res<Transition>,
-    windows: Query<&Window>,
+    stage: Res<StageResolution>,
     mut bleeds: Query<&mut Bleed>,
 ) {
-    let resolution = windows
-        .iter()
-        .next()
-        .map(|w| Vec2::new(w.width(), w.height()));
     let beat = clock.beat_duration();
 
     for mut bleed in &mut bleeds {
-        if let Some(resolution) = resolution {
-            bleed.resolution = resolution;
-        }
+        bleed.resolution = stage.0;
         bleed.time = clock.elapsed as f32;
         bleed.delta = clock.delta;
         bleed.progress = if transition.enabled {

@@ -69,6 +69,19 @@ pub fn spawn_stage_camera(mut commands: Commands, settings: Res<StageSettings>) 
         Hdr,
         settings.tonemapping,
         bloom_from(&settings),
+        // Off, explicitly. `Msaa` is a required component of `Camera` and
+        // defaults to `Sample4`, so leaving it out does not mean "no MSAA" —
+        // it means four samples, silently. A visual is one fullscreen quad
+        // with no geometric edges anywhere in it, so every one of those
+        // samples resolves to the same value.
+        //
+        // On a desktop GPU that is merely wasteful. On a tile-based mobile
+        // GPU it is worse than wasteful: four samples of `Rgba16Float` is
+        // 32 bytes per pixel of tile storage, which forces far smaller tiles
+        // and many more flushes to memory. Kura draws real geometry and would
+        // in principle like the antialiasing, but it draws soft-edged blended
+        // sprites that are already antialiased by their own falloff.
+        Msaa::Off,
         // Both post-process passes the rig owns. The bleed runs first, in HDR;
         // the grade runs last, after tonemapping.
         Bleed::default(),

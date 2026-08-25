@@ -57,6 +57,12 @@ pub struct ShowConfig {
     /// the projector's shape genuinely differs from the output's and the bars
     /// would otherwise land on the wall.
     pub aspect: Option<f32>,
+    /// How hard to push the GPU.
+    ///
+    /// `None` — the default — defers to `FETE_QUALITY`/`FETE_RENDER_SCALE`,
+    /// and failing those to the adapter probe in
+    /// [`detect_quality`](fete_core::quality::detect_quality).
+    pub quality: Option<Quality>,
 }
 
 impl Default for ShowConfig {
@@ -74,6 +80,7 @@ impl Default for ShowConfig {
             bpm: 128.0,
             start_with: None,
             aspect: None,
+            quality: None,
         }
     }
 }
@@ -123,6 +130,12 @@ impl ShowConfig {
         self.aspect = None;
         self
     }
+
+    /// Pin the quality tier, overriding both the environment and the probe.
+    pub fn with_quality(mut self, quality: Quality) -> Self {
+        self.quality = Some(quality);
+        self
+    }
 }
 
 /// Build an [`App`] with the window, framework and control surface in place.
@@ -155,8 +168,17 @@ pub fn show(config: ShowConfig) -> App {
             })
             .set(ImagePlugin::default_linear()),
     )
-    .add_plugins((FeteCorePlugin, ShowShellPlugin))
-    .insert_resource(config);
+    .add_plugins((FeteCorePlugin, ShowShellPlugin));
+
+    // Ahead of `insert_resource(config)` only for readability; what matters is
+    // that this lands before `Startup`, where the probe and the camera rig both
+    // read it. An explicit setting wins over the environment, which in turn
+    // wins over the probe.
+    if let Some(quality) = config.quality.or_else(Quality::from_env) {
+        app.insert_resource(quality);
+    }
+
+    app.insert_resource(config);
 
     // Scripted preview capture, for generating stills without a person at the
     // keyboard. Absent in normal use.

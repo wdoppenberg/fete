@@ -72,16 +72,39 @@ pub struct SlimeConfig {
 
 impl Default for SlimeConfig {
     fn default() -> Self {
-        Self {
-            size: UVec2::new(1920, 1080),
-            // Roughly 1.5 agents per pixel. Denser looks like fog because
-            // every texel saturates; much sparser and the network never closes
-            // into continuous filaments. Raised from one per pixel when the
-            // population went from two species to three — each one now gets a
-            // third of the agents rather than a half, and at the old count the
-            // individual networks were too sparse to close.
-            agent_count: 3_000_000,
-        }
+        Self::for_tier(Tier::High)
+    }
+}
+
+impl SlimeConfig {
+    /// The simulation sized for a quality tier.
+    ///
+    /// This is the only visual whose cost is invisible to the render scale —
+    /// the sim runs at its own resolution and the display material stretches
+    /// the result — so it is also the only one that has to be told separately
+    /// to be cheaper. It is by some distance the most expensive thing in the
+    /// set: at the high tier it is 3 million agents doing seven scattered
+    /// texture reads and three atomics each, every frame, over about 123 MB of
+    /// GPU buffers. On hardware with no dedicated video memory that is not a
+    /// slow visual, it is an impossible one.
+    ///
+    /// The agents-per-pixel ratio is held at roughly 1.4 across all three,
+    /// because that ratio is what decides whether the look survives. Below
+    /// about one per pixel the three species' networks stop closing into
+    /// continuous filaments and the frame reads as static rather than as
+    /// something alive; above about two every texel saturates and it reads as
+    /// fog. Shrinking the grid and the population together keeps the physarum
+    /// looking like physarum and just makes it coarser.
+    pub fn for_tier(tier: Tier) -> Self {
+        let (size, agent_count) = tier.pick(
+            (UVec2::new(1920, 1080), 3_000_000),
+            (UVec2::new(1280, 720), 1_300_000),
+            // Matched to the low tier's render scale at 720p, so the trails are
+            // very nearly one texel per output pixel and the upscale is not
+            // doing any work the simulation could have done itself.
+            (UVec2::new(640, 360), 300_000),
+        );
+        Self { size, agent_count }
     }
 }
 
@@ -182,6 +205,25 @@ impl Plugin for SlimePlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/slime.wgsl");
         embedded_asset!(app, "shaders/slime_display.wgsl");
+
+        // Sized before `init_resource`, which leaves an existing resource
+        // alone — so an app that inserted its own `SlimeConfig` still wins.
+        //
+        // Read here, at plugin build, rather than in `Startup`: the compute
+        // plugin copies the config into the render world as it builds, and the
+        // buffers are allocated from that copy. The consequence is that the
+        // adapter probe in `detect_quality`, which cannot run until the render
+        // device exists, is too late to shrink this one — which is why it says
+        // so in its warning, and why the Pi's launcher passes `--quality low`
+        // explicitly rather than relying on the probe.
+        if !app.world().contains_resource::<SlimeConfig>() {
+            let tier = app
+                .world()
+                .get_resource::<Quality>()
+                .map(|quality| quality.tier)
+                .unwrap_or_default();
+            app.insert_resource(SlimeConfig::for_tier(tier));
+        }
 
         app.init_resource::<SlimeConfig>()
             .init_resource::<SlimeParams>()
@@ -358,6 +400,34 @@ fn follow_trail_texture(
         let latest = textures.write();
         if material.trail.as_ref() != Some(latest) {
             material.trail = Some(latest.clone());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The high tier must be exactly what the visual was authored at.
+    #[test]
+    fn the_high_tier_is_the_original_simulation() {
+        let high = SlimeConfig::for_tier(Tier::High);
+        assert_eq!(high.size, UVec2::new(1920, 1080));
+        assert_eq!(high.agent_count, 3_000_000);
+    }
+
+    /// Agents per pixel is what decides whether the network closes into
+    /// filaments. Every tier has to sit in the band where it does.
+    #[test]
+    fn every_tier_holds_the_agent_density() {
+        for tier in [Tier::High, Tier::Medium, Tier::Low] {
+            let config = SlimeConfig::for_tier(tier);
+            let per_pixel = config.agent_count as f32 / (config.size.x * config.size.y) as f32;
+            assert!(
+                (1.0..=2.0).contains(&per_pixel),
+                "{tier:?} is {per_pixel:.2} agents per pixel, outside the band \
+                 where the three species' networks close"
+            );
         }
     }
 }

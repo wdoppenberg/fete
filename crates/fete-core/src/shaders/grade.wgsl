@@ -19,6 +19,7 @@ struct Grade {
     tilt: f32,
     tilt_focus: f32,
     tilt_width: f32,
+    tilt_taps: f32,
 }
 
 @group(0) @binding(0) var screen_texture: texture_2d<f32>;
@@ -103,9 +104,17 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             var blurred = color;
             // A golden-angle spiral: evenly covers the disc without the
             // rosettes a fixed ring produces on hard edges.
-            for (var i = 0; i < 10; i++) {
+            //
+            // The tap count comes from the quality tier. Fewer taps over the
+            // same radius is a sparser sampling of the same disc, so the blur
+            // keeps its size and loses only smoothness — which on a frame this
+            // dark, behind a bloom, is close to invisible. Widening the spiral
+            // instead would change the look rather than the cost.
+            let taps = max(grade.tilt_taps, 1.0);
+            let count = i32(taps);
+            for (var i = 0; i < count; i++) {
                 let angle = f32(i) * 2.3999632;
-                let r = sqrt((f32(i) + 0.5) / 10.0) * radius;
+                let r = sqrt((f32(i) + 0.5) / taps) * radius;
                 let offset = vec2<f32>(cos(angle), sin(angle)) * r * texel;
                 // `textureSampleLevel`, not `textureSample`: this branch depends
                 // on uv, and implicit-derivative sampling is not allowed in
@@ -117,7 +126,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
                     0.0,
                 ).rgb;
             }
-            color = mix(color, blurred / 11.0, defocus);
+            color = mix(color, blurred / (taps + 1.0), defocus);
         }
     }
 

@@ -60,16 +60,61 @@ pub struct YamaParams {
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+#[bind_group_data(Tier)]
 pub struct Yama {
     #[uniform(0)]
     globals: FeteGlobals,
     #[uniform(1)]
     params: YamaParams,
+    /// Not a binding — the pipeline specialisation key.
+    tier: Tier,
+}
+
+impl From<&Yama> for Tier {
+    fn from(visual: &Yama) -> Self {
+        visual.tier
+    }
 }
 
 impl Material2d for Yama {
     fn fragment_shader() -> ShaderRef {
         "embedded://fete_visual_yama/shaders/yama.wgsl".into()
+    }
+
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let tier = key.bind_group_data;
+        let Some(fragment) = descriptor.fragment.as_mut() else {
+            return Ok(());
+        };
+        fragment.shader_defs.extend(tier.shader_defs());
+        // Every step of both marches calls `mountain_height`, which is an
+        // atan2, six sines and a pow — transcendentals, which a mobile GPU's
+        // special-function unit runs at a fraction of its ALU rate. This is
+        // the most expensive shader in the set and the steps are why.
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "MARCH_STEPS".into(),
+            tier.pick(48, 32, 20),
+        ));
+        // Bisection is what stops a coarse march showing terraces on the
+        // ridge, so it is cut more gently than the march itself: each step
+        // halves the remaining error, and three still resolve the surface to
+        // an eighth of a march step.
+        fragment.shader_defs.push(ShaderDefVal::Int(
+            "BISECT_STEPS".into(),
+            tier.pick(6, 5, 3),
+        ));
+        // The reflection march is unconditional at high quality, so a water
+        // pixel reflecting the cone pays for the mountain twice. Below high it
+        // keeps the sky and the airlight — which is most of what the water
+        // shows anyway — and drops the reflected peak.
+        if tier == Tier::Low {
+            fragment.shader_defs.push("NO_MOUNTAIN_REFLECTION".into());
+        }
+        Ok(())
     }
 }
 
@@ -80,6 +125,10 @@ impl Visual for Yama {
 
     fn globals_mut(&mut self) -> &mut FeteGlobals {
         &mut self.globals
+    }
+
+    fn set_quality(&mut self, quality: Quality) {
+        self.tier = quality.tier;
     }
 
     fn animate(&mut self, frame: &Frame) {

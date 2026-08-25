@@ -18,6 +18,7 @@ use bevy::sprite_render::{Material2d, Material2dPlugin, MeshMaterial2d};
 use crate::bleed::Transition;
 use crate::globals::{FeteGlobals, Frame, ShowOutput};
 use crate::palette::Palette;
+use crate::quality::Quality;
 use crate::signal::{Audio, Macros};
 
 /// Identifies a visual. Stable across runs — used for presets and MIDI mapping.
@@ -51,6 +52,21 @@ pub trait Visual: Material2d<Data: PartialEq + Eq + Hash + Clone> + Default {
     /// current. Override to map macro knobs onto your own uniforms.
     fn animate(&mut self, frame: &Frame) {
         let _ = frame;
+    }
+
+    /// Store the quality tier where the pipeline key can see it.
+    ///
+    /// A visual that scales its shader with quality keeps a [`Tier`] field,
+    /// names it in `#[bind_group_data]`, and assigns it here; changing it
+    /// respecialises the pipeline, which is how a cheaper loop bound reaches
+    /// WGSL without any uniform growing a field.
+    ///
+    /// Called on spawn and every frame, so the default — ignore it — is right
+    /// for any visual already cheap enough to run everywhere.
+    ///
+    /// [`Tier`]: crate::quality::Tier
+    fn set_quality(&mut self, quality: Quality) {
+        let _ = quality;
     }
 }
 
@@ -223,11 +239,16 @@ fn spawn_visual<V: Visual>(
     quad: Res<VisualQuad>,
     mut materials: ResMut<Assets<V>>,
     globals: Res<FeteGlobals>,
+    quality: Res<Quality>,
 ) {
     let mut material = V::default();
     // Seed the globals immediately: the quad is rendered before `Update` runs
     // again, and an unwritten uniform means one frame of garbage.
     *material.globals_mut() = *globals;
+    // And the tier, for the same reason in a worse key: specialising on the
+    // default tier first would compile a pipeline the show never uses, and
+    // stutter on the frame it is thrown away.
+    material.set_quality(*quality);
 
     commands.spawn((
         Name::new(V::NAME),
@@ -250,6 +271,7 @@ fn animate_visual<V: Visual>(
     macros: Res<Macros>,
     audio: Res<Audio>,
     palette: Res<Palette>,
+    quality: Res<Quality>,
 ) {
     let frame = Frame {
         globals: &globals,
@@ -257,6 +279,7 @@ fn animate_visual<V: Visual>(
         macros: &macros,
         audio: &audio,
         palette: &palette,
+        quality: *quality,
     };
 
     for handle in &surfaces {
@@ -266,6 +289,7 @@ fn animate_visual<V: Visual>(
             continue;
         };
         *material.globals_mut() = *globals;
+        material.set_quality(*quality);
         material.animate(&frame);
     }
 }

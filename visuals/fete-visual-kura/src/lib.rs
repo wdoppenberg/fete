@@ -328,6 +328,7 @@ fn drive(
     assets: Res<KuraAssets>,
     globals: Res<FeteGlobals>,
     clock: Res<ShowClock>,
+    quality: Res<Quality>,
     macros: Res<Macros>,
     palette: Res<Palette>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -403,13 +404,16 @@ fn drive(
 
     // --- build the geometry ---------------------------------------------------
     let trail_length = knob(4, 0.35, 1.6);
+    // What the frame may spend on vertices. This visual is CPU-bound, so this
+    // is the knob that decides whether it holds framerate — see [`KuraBudget`].
+    let budget = quality.tier.pick(KuraBudget::FULL, KuraBudget::MID, KuraBudget::LEAN);
 
     for buffer in &mut sim.buffers {
         buffer.clear();
     }
 
     let ground = &mut sim.buffers[Layer::Ground.index()];
-    sim.flow.emit(ground, 1.0);
+    sim.flow.emit(ground, 1.0, budget.flow_history);
     render::emit_light_triangles(ground, &sim.flocks.light, &sim.colors.light, musical);
 
     render::emit_discs(
@@ -422,7 +426,7 @@ fn drive(
     );
 
     let lattice = &mut sim.buffers[Layer::Lattice.index()];
-    sim.emergent.emit(lattice, &sim.flocks.heavy, 1.0);
+    sim.emergent.emit(lattice, &sim.flocks.heavy, 1.0, budget);
     render::emit_rings(lattice, &sim.flocks.fields, 1.0);
 
     let dust = &mut sim.buffers[Layer::Dust.index()];
@@ -440,6 +444,7 @@ fn drive(
         sim.kuramoto.pulses(),
         musical,
         trail_length,
+        budget.trail_len,
     );
 
     for (index, handle) in assets.meshes.iter().enumerate() {

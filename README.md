@@ -38,6 +38,7 @@ cargo run -p fete-show --release               # the whole set, on autopilot
 cargo run -p fete-show --release -- --fullscreen --no-hud
 cargo run -p fete-show --release -- --start neon --manual
 cargo run -p fete-show --release -- --start yama --no-rotate   # hold one visual
+cargo run -p fete-show --release -- --quality low             # what a Pi renders
 ```
 
 ## Running unattended
@@ -99,6 +100,58 @@ window, so the same show works on 4:3, 16:9 or anything reasonable between.
 `--aspect 4:3` masks the output to a shape with black bars — worth it only when
 the projector's shape genuinely differs from the output's and the extra image
 would otherwise land on the wall.
+
+## Quality tiers
+
+Every visual here was sized by eye against a desktop GPU, which is the right way
+to build them and the wrong way to ship them. A Raspberry Pi 4's VideoCore VI
+has on the order of a five-hundredth of the arithmetic throughput they were
+tuned on, and a 110-step raymarch does not become a 110-step raymarch that runs
+slower — it becomes a slideshow.
+
+So cost is a dial. `--quality high|medium|low` (or `FETE_QUALITY`) sets it, and
+`--render-scale` (or `FETE_RENDER_SCALE`) overrides the resolution part on its
+own. With neither, the adapter is probed at startup and anything that plainly
+will not hold framerate — a Broadcom VideoCore, a software renderer — drops to
+`low` with a line in the log saying so. The probe only ever moves *down*:
+guessing that a GPU is fast is how you get a black screen in front of an
+audience.
+
+| | high | medium | low |
+|---|---|---|---|
+| render scale | 1.0 | 0.75 | 0.5 |
+| Neon march / draw distance | 110 / 78 | 80 / 62 | 56 / 48 |
+| Sprawl block march / density octaves | 64 / 3 | 40 / 2 | 24 / 2 |
+| Yama march / bisect / lake reflection | 48 / 6 / yes | 32 / 5 / yes | 20 / 3 / no |
+| Kanban signage layers | 4 | 3 | 2 |
+| Slime grid / agents | 1920×1080 / 3.0M | 1280×720 / 1.3M | 640×360 / 300k |
+| Kura trail / flow history | 56 / 10 | 32 / 6 | 16 / 3 |
+| grade tilt-shift taps | 10 | 6 | 3 |
+
+**`high` is the reference and nothing may quietly change it.** Every value in
+that column is exactly what the visual was authored at, and there are tests
+pinning the ones most likely to drift. The single deliberate exception is that
+MSAA is now explicitly off: `Msaa` is a required component of `Camera` and
+defaults to four samples, so the show had been paying for a 4× HDR attachment
+and its resolve on content that is one fullscreen quad with no geometric edges
+in it.
+
+Two things are worth knowing about the mechanism. Shader loop bounds arrive as
+*shader defs* through `Material2d::specialize`, not as uniform fields — partly
+because `FeteGlobals` cannot grow a field on this toolchain, but mostly because
+a def becomes a `const` in the generated WGSL and the loop stays unrollable.
+And render scale is a sampling-rate change and nothing else: the stage renders
+into a smaller image and a second camera stretches it over the window, but
+`resolution` still reports logical pixels, so scanlines, grain and vignette keep
+the size they were tuned at. At scale `1.0` none of that machinery exists — no
+image, no second camera, no extra blit — and the pipeline is exactly what it was.
+
+The one cost the render scale cannot touch is Slime, whose simulation runs at
+its own resolution and is stretched by the display material. It is told
+separately, and because its buffers are allocated while the plugin builds — before
+a render device exists for the probe to look at — the auto-probe is too late to
+shrink it. Pass `--quality low` explicitly on hardware that needs it; the probe
+says so in its warning when it lowers the tier on its own.
 
 ## What a visual is
 
@@ -162,6 +215,27 @@ makes a visual twitch along with the kick and compete with the music.
 > function call`, pointing at the calls that take a `Globals`. Removing the
 > field fixes it. Until that is understood, derive what you need from the
 > fields already there. This is the one sharp edge in the framework.
+>
+> The bug is specific to *this* struct — `Grade` grew a field without complaint
+> — but it is why the quality tier reaches shaders as a shader def rather than
+> as a uniform.
+
+A visual that wants to be cheaper on weak hardware keeps a `Tier` field, names
+it in `#[bind_group_data(Tier)]`, assigns it in `set_quality`, and pushes its
+own table in `Material2d::specialize`:
+
+```rust
+fragment.shader_defs.extend(tier.shader_defs());
+fragment.shader_defs.push(ShaderDefVal::Int(
+    "MARCH_STEPS".into(),
+    tier.pick(110, 80, 56),
+));
+```
+
+with `const MARCH_STEPS: i32 = #{MARCH_STEPS};` in the WGSL. The framework never
+guesses what to cut — it only says how much, and the visual decides what that
+buys. Anything already cheap enough to run everywhere (Terebi) implements none
+of it and inherits the default no-op.
 
 Shader helpers ship alongside it: `fete::globals` (coordinates, knobs,
 beat subdivisions), `fete::noise` (hashes, fbm, ridged, curl, kaleidoscope

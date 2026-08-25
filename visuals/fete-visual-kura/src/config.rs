@@ -17,6 +17,62 @@ pub const WORLD_SIZE: f32 = 50.0;
 /// window size and any aspect.
 pub const REFERENCE: [f32; 2] = [1920.0, 1080.0];
 
+// ---------------------------------------------------------------- budget
+
+/// How much geometry the frame is allowed to build.
+///
+/// Kura is the one visual in the set that is limited by the CPU rather than the
+/// GPU. Its fragment shaders are almost empty; what costs is rebuilding roughly
+/// a hundred thousand vertices — some three and a half megabytes — from scratch
+/// every frame and handing the lot back to the GPU. On a Cortex-A72 that is the
+/// frame time, and no amount of render scaling touches it.
+///
+/// So the budget caps what is *emitted*, not what is simulated. The flocks, the
+/// oscillators and the history buffers all stay exactly as they are, which
+/// keeps the motion identical — the same boids doing the same things — and only
+/// draws less of the trail behind them. Shrinking the simulation instead would
+/// change how the flock behaves, which is the thing worth keeping.
+#[derive(Debug, Clone, Copy)]
+pub struct KuraBudget {
+    /// Positions drawn behind each heavy boid, of [`TRAIL_LEN`] remembered.
+    pub trail_len: usize,
+    /// Smear samples drawn per flow cell, of [`FLOW_HISTORY`] remembered.
+    pub flow_history: usize,
+    /// Cap on emergent links drawn.
+    pub links: usize,
+    /// Cap on emergent triangles drawn.
+    pub tris: usize,
+}
+
+impl KuraBudget {
+    /// The full budget: draw everything that is remembered.
+    pub const FULL: Self = Self {
+        trail_len: TRAIL_LEN,
+        flow_history: FLOW_HISTORY,
+        links: MAX_LINKS,
+        tris: MAX_TRIS,
+    };
+
+    /// Roughly a third of the geometry, which is about a third of the frame
+    /// time. Trails shorten and the flow smear gets a shorter tail; the discs,
+    /// triangles and rings — everything that carries the composition — are
+    /// untouched, because they are a tenth of the vertex count between them.
+    pub const LEAN: Self = Self {
+        trail_len: 16,
+        flow_history: 3,
+        links: 800,
+        tris: 200,
+    };
+
+    /// Between the two.
+    pub const MID: Self = Self {
+        trail_len: 32,
+        flow_history: 6,
+        links: 2_000,
+        tris: 400,
+    };
+}
+
 // ---------------------------------------------------------------- populations
 
 /// Big pulsing discs. The ones that carry the colour and grow the geometry.
@@ -208,6 +264,32 @@ impl Default for FlockParams {
             flow_w_heavy: 0.10,
             flow_w_light: 0.01,
             flow_w_small: 0.01,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The high tier must be exactly what the visual was authored at, or the
+    /// budget has quietly become a change to the look rather than to the cost.
+    #[test]
+    fn the_full_budget_draws_everything_remembered() {
+        assert_eq!(KuraBudget::FULL.trail_len, TRAIL_LEN);
+        assert_eq!(KuraBudget::FULL.flow_history, FLOW_HISTORY);
+        assert_eq!(KuraBudget::FULL.links, MAX_LINKS);
+        assert_eq!(KuraBudget::FULL.tris, MAX_TRIS);
+    }
+
+    /// Drawing more than was remembered would index past the ring buffers.
+    #[test]
+    fn no_budget_exceeds_what_is_remembered() {
+        for budget in [KuraBudget::FULL, KuraBudget::MID, KuraBudget::LEAN] {
+            assert!(budget.trail_len <= TRAIL_LEN);
+            assert!(budget.flow_history <= FLOW_HISTORY);
+            assert!(budget.links <= MAX_LINKS);
+            assert!(budget.tris <= MAX_TRIS);
         }
     }
 }

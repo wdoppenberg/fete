@@ -68,6 +68,7 @@ impl Trails {
         pulses: &[f32],
         time: f32,
         length_scale: f32,
+        budget: usize,
     ) {
         for (i, color) in colors.iter().enumerate().take(N_HEAVY) {
             let pulse = pulses.get(i).copied().unwrap_or(1.0);
@@ -78,7 +79,10 @@ impl Trails {
                 TRAIL_LEN_MIN_FRAC + (TRAIL_LEN_MAX_FRAC - TRAIL_LEN_MIN_FRAC) * normalised;
             let denominator = (fraction * length_scale * TRAIL_LEN as f32).max(1.0);
 
-            let visible = self.filled.min(TRAIL_LEN);
+            // The budget shortens the tail rather than thinning it: the
+            // trail is a fade, so dropping the dimmest end is invisible where
+            // dropping every other point would break the line into dashes.
+            let visible = self.filled.min(TRAIL_LEN).min(budget);
             for age in 0..visible {
                 let alpha = if age == 0 {
                     1.0
