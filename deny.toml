@@ -1,0 +1,62 @@
+# Supply-chain gate for CI: `cargo deny --all-features check`.
+#
+# The dependency graph here is Bevy's, which is wide and moves fast. The point
+# of this file is not to freeze it but to make three things loud: a crate with
+# a published advisory, a licence nobody vetted, and a dependency arriving from
+# somewhere other than crates.io.
+
+[graph]
+# Only the platforms this is actually shipped for, plus Linux for the CI
+# runners. Without this the check drags in wasm and Android-only crates that
+# are never built.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+all-features = true
+
+[advisories]
+version = 2
+# Unmaintained crates are a warning, not a failure: Bevy pulls in a few, and a
+# release should not be blocked by someone else's archived repository.
+unmaintained = "workspace"
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Exactly the licences the current graph actually carries, and nothing else.
+# A new dependency under anything else fails the check by name, which is the
+# point: the decision to accept a licence should be made once, here.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+# A warning rather than an error, and only because of this workspace's own
+# shape: the members depend on each other by path, which reads as a wildcard,
+# and `allow-wildcard-paths` is ignored for crates that are publishable. Adding
+# `publish = false` to the members — none of them can go to crates.io as they
+# stand — makes it safe to turn this back up to "deny".
+wildcards = "warn"
+allow-wildcard-paths = true
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

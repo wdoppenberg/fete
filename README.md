@@ -786,6 +786,43 @@ FETE_CAPTURE=preview.png@20 cargo run -p fete-show --release
 Renders for twenty seconds, writes one frame, exits. Captures the app's own
 render target.
 
+## CI and releases
+
+Every push and pull request runs `.github/workflows/ci.yml`, which is strict on
+purpose: `cargo fmt --all --check`, clippy over all targets and all features
+with `-D warnings`, rustdoc with `-D warnings` including private items, the
+test suite on Linux, macOS and Windows, and `cargo deny` over the dependency
+graph for advisories, licences and unexpected sources. Every cargo invocation
+passes `--locked`, so a build that would edit `Cargo.lock` fails instead. The
+same file runs again as the first stage of a release, so nothing ships from a
+tree that does not pass it.
+
+The whole thing reproduces locally:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --document-private-items
+cargo test --workspace --all-features --locked
+cargo deny --all-features check
+```
+
+Releases are cut by tag. The tag has to agree with the workspace version or the
+run stops before it builds anything:
+
+```sh
+# after setting workspace.package.version in Cargo.toml
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+That produces an ad-hoc signed `FeteShow.app` for Apple silicon on macOS 11+,
+with the bare binary alongside it as a tarball, a zip of `fete-show.exe` for
+Windows, and `SHA256SUMS.txt`, attached to a GitHub release. Neither build is signed with a real certificate, so the first
+launch needs `xattr -dr com.apple.quarantine` on macOS and *More info → Run
+anyway* on Windows. Running the release workflow by hand from a branch builds
+and packages everything without publishing, which is how to test a change to
+it.
+
 ## Notes on looking good on a projector
 
 These are the decisions that mattered most, recorded so they do not get

@@ -1,0 +1,249 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  # Same build, no publishing: a way to prove the packaging works before a tag
+  # exists to prove it on.
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  BINARY: fete-show
+
+jobs:
+  # A tag that disagrees with Cargo.toml would ship binaries reporting the
+  # wrong version, so it is the first thing checked and nothing builds until
+  # it holds.
+  version:
+    name: Check tag against Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+          manifest=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "fete-show") | .version')
+          echo "Cargo.toml version: $manifest"
+
+          if [ "$IS_TAG" = "true" ]; then
+            tag="${REF_NAME#v}"
+            if [ "$tag" != "$manifest" ]; then
+              echo "::error::tag $REF_NAME does not match the workspace version $manifest"
+              exit 1
+            fi
+            version="$manifest"
+          else
+            # Dry run from the branch: label the artifacts, publish nothing.
+            version="$manifest+$(git rev-parse --short HEAD)"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A hyphen in the tag (v0.2.0-rc.1) means it is not the real thing.
+          case "${REF_NAME#v}" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  # The full CI suite. Binaries only get built from a tree that passes it.
+  ci:
+    name: CI
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  macos:
+    name: macOS (Apple silicon)
+    needs: [version, ci]
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # The oldest macOS that runs on Apple silicon at all.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked -p fete-show --target aarch64-apple-darwin
+
+      # A .app rather than a bare binary: macOS gives a bundled process a dock
+      # icon and proper focus, which matters when the thing is driven live by
+      # keyboard on a stage.
+      - name: Assemble FeteShow.app
+        run: |
+          set -euo pipefail
+          app="dist/FeteShow.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+
+          cp "target/aarch64-apple-darwin/release/$BINARY" "$app/Contents/MacOS/$BINARY"
+
+          cat > "$app/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>fete</string>
+            <key>CFBundleDisplayName</key><string>fête</string>
+            <key>CFBundleExecutable</key><string>$BINARY</string>
+            <key>CFBundleIdentifier</key><string>com.wdoppenberg.fete-show</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION%%+*}</string>
+            <key>CFBundleVersion</key><string>${VERSION%%+*}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Ad-hoc signature only — there is no Developer ID here, so this
+          # satisfies the loader, not Gatekeeper. See the release notes.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --verbose "$app"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          # ditto, not zip: it is the one that preserves the bundle's
+          # signature and symlinks.
+          (cd dist && ditto -c -k --sequesterRsrc --keepParent \
+            FeteShow.app "$BINARY-$VERSION-macos-arm64.zip")
+          # The bare binary as well, for running it from a terminal with flags.
+          (cd dist && tar czf "$BINARY-$VERSION-macos-arm64.tar.gz" \
+            -C FeteShow.app/Contents/MacOS "$BINARY" -C "$GITHUB_WORKSPACE" README.md)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows (x86_64)
+    needs: [version, ci]
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked -p fete-show --target x86_64-pc-windows-msvc
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path dist/stage | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/${env:BINARY}.exe" dist/stage/
+          Copy-Item README.md dist/stage/
+          Compress-Archive -Path dist/stage/* `
+            -DestinationPath "dist/${env:BINARY}-${env:VERSION}-windows-x86_64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    # Dry runs from a branch build and stop here.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum -- *.zip *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create the release
+        run: |
+          set -euo pipefail
+          template=$(mktemp)
+          notes=$(mktemp)
+          cat > "$template" <<'NOTES'
+          ## Downloads
+
+          | Platform | File |
+          | --- | --- |
+          | macOS 11+, Apple silicon | `fete-show-VERSION-macos-arm64.zip` (app bundle) or `.tar.gz` (bare binary) |
+          | Windows 10/11, x86_64 | `fete-show-VERSION-windows-x86_64.zip` |
+
+          Both are unsigned. macOS will refuse a downloaded bundle until the
+          quarantine flag is off:
+
+          ```sh
+          xattr -dr com.apple.quarantine FeteShow.app
+          ```
+
+          Windows SmartScreen wants *More info → Run anyway* the first time.
+
+          ## Running it
+
+          ```sh
+          fete-show --fullscreen --no-hud          # what the projector gets
+          fete-show --aspect 16:9 --quality low    # a different screen, less GPU
+          fete-show --start neon --manual          # one visual, keys in your hands
+          ```
+
+          Terebi's video channel needs clips, which are fetched separately with
+          `tools/fetch-clips.sh` from the repository and passed with `--video <dir>`.
+
+          Verify a download against `SHA256SUMS.txt`.
+          NOTES
+          # The template is quoted so the backticks in it stay literal; the
+          # version is the one thing substituted back in.
+          sed "s/VERSION/$VERSION/g" "$template" > "$notes"
+          cat "$notes"
+
+          gh release create "${{ github.ref_name }}" \
+            --title "fête ${{ github.ref_name }}" \
+            --notes-file "$notes" \
+            --verify-tag \
+            ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }} \
+            artifacts/*
