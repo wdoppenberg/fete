@@ -54,6 +54,16 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # One cache per OS rather than per job: clippy, rustdoc and the tests
+          # compile the same dependency tree, and three separate multi-gigabyte
+          # entries crowd the repository's 10 GB cache budget until everything
+          # starts getting evicted.
+          shared-key: dev-${{ runner.os }}
+          # Only the default branch writes. A cache is scoped to the ref that
+          # created it, so a tag or PR writing one spends the shared budget on
+          # something no other ref can ever read.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -72,6 +82,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # One cache per OS rather than per job: clippy, rustdoc and the tests
+          # compile the same dependency tree, and three separate multi-gigabyte
+          # entries crowd the repository's 10 GB cache budget until everything
+          # starts getting evicted.
+          shared-key: dev-${{ runner.os }}
+          # Only the default branch writes. A cache is scoped to the ref that
+          # created it, so a tag or PR writing one spends the shared budget on
+          # something no other ref can ever read.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -92,6 +112,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # One cache per OS rather than per job: clippy, rustdoc and the tests
+          # compile the same dependency tree, and three separate multi-gigabyte
+          # entries crowd the repository's 10 GB cache budget until everything
+          # starts getting evicted.
+          shared-key: dev-${{ runner.os }}
+          # Only the default branch writes. A cache is scoped to the ref that
+          # created it, so a tag or PR writing one spends the shared budget on
+          # something no other ref can ever read.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -121,6 +151,37 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny --all-features check
+
+  # The release workflow's builds are the slowest thing in this repository and
+  # they can never warm themselves: a cache belongs to the ref that wrote it, so
+  # what `v0.1.0` builds is unreadable to `v0.2.0`, and only the default
+  # branch's caches are visible to every ref. Nothing else here compiles the
+  # release profile — with thin LTO and one codegen unit it is a different, far
+  # slower build than the tests — so master compiles it once and leaves the
+  # result where a tag can pick it up. This gates nothing; it is a cache, and it
+  # is deliberately absent from the roll-up below.
+  release-cache:
+    name: warm release cache (${{ matrix.target }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Must match the key the release workflow restores with.
+          shared-key: release-${{ matrix.target }}
+      - run: cargo build --release --locked -p fete-show --target ${{ matrix.target }}
 
   # Single required check for branch protection: it fails if anything above
   # failed or was skipped, so adding a job to the matrix never silently

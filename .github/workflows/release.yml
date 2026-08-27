@@ -84,6 +84,12 @@ jobs:
         with:
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Written by the release-cache job on master; see the note there.
+          shared-key: release-aarch64-apple-darwin
+          # A tag writing this back would only produce a cache scoped to that
+          # tag, which no later release can read.
+          save-if: "false"
 
       - name: Build
         run: cargo build --release --locked -p fete-show --target aarch64-apple-darwin
@@ -164,6 +170,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-x86_64-pc-windows-msvc
+          save-if: "false"
 
       - name: Build
         run: cargo build --release --locked -p fete-show --target x86_64-pc-windows-msvc
@@ -278,9 +287,27 @@ jobs:
           sed "s/VERSION/$VERSION/g" "$template" > "$notes"
           cat "$notes"
 
+          # The release goes up empty first. `gh release create` uploads
+          # assets one after another and took eighteen minutes over 67 MB on
+          # v0.1.0; pushing them concurrently is most of that back.
           gh release create "${{ github.ref_name }}" \
             --title "fête ${{ github.ref_name }}" \
             --notes-file "$notes" \
             --verify-tag \
-            ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }} \
-            artifacts/*
+            ${{ needs.version.outputs.prerelease == 'true' && '--prerelease' || '' }}
+
+          pids=()
+          for asset in artifacts/*; do
+            gh release upload "${{ github.ref_name }}" "$asset" --clobber &
+            pids+=($!)
+          done
+          # Collect every exit status rather than the last: a half-uploaded
+          # release should fail the job, not publish quietly missing an asset.
+          failed=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || failed=1
+          done
+          [ "$failed" -eq 0 ] || { echo "::error::an asset failed to upload"; exit 1; }
+
+          gh release view "${{ github.ref_name }}" --json assets \
+            --jq '.assets[] | "uploaded \(.name) (\(.size) bytes)"'
