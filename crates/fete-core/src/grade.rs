@@ -77,7 +77,7 @@ pub struct Grade {
     pub tilt_width: f32,
     /// How many taps the tilt-shift blur spends per pixel.
     ///
-    /// Owned by the quality tier, not by the look: [`update_grade`] overwrites
+    /// Owned by the quality tier, not by the look: `update_grade` overwrites
     /// it every frame, so setting it by hand does nothing. It is a field on the
     /// uniform rather than a shader def because a `FullscreenMaterial`
     /// specialises only on its target format — there is no hook to push defs
