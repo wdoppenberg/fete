@@ -82,10 +82,7 @@ impl Slot {
     ///
     /// [`take_frame_into`]: Self::take_frame_into
     pub fn has_fresh_frame(&self) -> bool {
-        self.shared
-            .latest
-            .lock()
-            .is_ok_and(|latest| latest.fresh)
+        self.shared.latest.lock().is_ok_and(|latest| latest.fresh)
     }
 
     /// Copy the newest frame into `layer` if one has arrived since the last

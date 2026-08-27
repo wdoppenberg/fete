@@ -103,10 +103,9 @@ impl Material2d for Yama {
         // ridge, so it is cut more gently than the march itself: each step
         // halves the remaining error, and three still resolve the surface to
         // an eighth of a march step.
-        fragment.shader_defs.push(ShaderDefVal::Int(
-            "BISECT_STEPS".into(),
-            tier.pick(6, 5, 3),
-        ));
+        fragment
+            .shader_defs
+            .push(ShaderDefVal::Int("BISECT_STEPS".into(), tier.pick(6, 5, 3)));
         // The reflection march is unconditional at high quality, so a water
         // pixel reflecting the cone pays for the mountain twice. Below high it
         // keeps the sky and the airlight — which is most of what the water

@@ -406,7 +406,9 @@ fn drive(
     let trail_length = knob(4, 0.35, 1.6);
     // What the frame may spend on vertices. This visual is CPU-bound, so this
     // is the knob that decides whether it holds framerate — see [`KuraBudget`].
-    let budget = quality.tier.pick(KuraBudget::FULL, KuraBudget::MID, KuraBudget::LEAN);
+    let budget = quality
+        .tier
+        .pick(KuraBudget::FULL, KuraBudget::MID, KuraBudget::LEAN);
 
     for buffer in &mut sim.buffers {
         buffer.clear();

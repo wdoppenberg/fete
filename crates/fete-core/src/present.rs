@@ -28,8 +28,8 @@
 //! its own output.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};

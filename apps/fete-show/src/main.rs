@@ -18,12 +18,12 @@
 use bevy::prelude::*;
 use fete_app::prelude::*;
 use fete_core::prelude::*;
+use fete_video::VideoPlugin;
 use fete_visual_kanban::KanbanPlugin;
 use fete_visual_kura::KuraPlugin;
 use fete_visual_neon::NeonPlugin;
 use fete_visual_slime::SlimePlugin;
 use fete_visual_sprawl::SprawlPlugin;
-use fete_video::VideoPlugin;
 use fete_visual_terebi::TerebiPlugin;
 use fete_visual_yama::YamaPlugin;
 

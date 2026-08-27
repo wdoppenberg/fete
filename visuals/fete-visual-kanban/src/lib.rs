@@ -144,17 +144,15 @@ impl Material2d for Kanban {
         // Four parallax layers of signage, each an independent grid lookup
         // with its own character SDF. The nearest layers carry the silhouette;
         // the furthest is a haze of small marks that the bloom smears anyway.
-        fragment.shader_defs.push(ShaderDefVal::Int(
-            "LAYERS".into(),
-            tier.pick(4, 3, 2),
-        ));
+        fragment
+            .shader_defs
+            .push(ShaderDefVal::Int("LAYERS".into(), tier.pick(4, 3, 2)));
         // The air FBM runs on every pixel whether or not there is a sign on
         // it. It is a slow brightness drift across the frame, and two octaves
         // hold that shape.
-        fragment.shader_defs.push(ShaderDefVal::Int(
-            "AIR_OCTAVES".into(),
-            tier.pick(3, 2, 2),
-        ));
+        fragment
+            .shader_defs
+            .push(ShaderDefVal::Int("AIR_OCTAVES".into(), tier.pick(3, 2, 2)));
         Ok(())
     }
 }

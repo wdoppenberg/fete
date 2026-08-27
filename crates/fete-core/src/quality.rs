@@ -309,13 +309,22 @@ mod tests {
     #[test]
     fn stage_size_scales_and_never_collapses() {
         let quality = Quality::new(Tier::Low);
-        assert_eq!(quality.stage_size(UVec2::new(1280, 720)), UVec2::new(640, 360));
+        assert_eq!(
+            quality.stage_size(UVec2::new(1280, 720)),
+            UVec2::new(640, 360)
+        );
         assert_eq!(quality.stage_size(UVec2::ZERO), UVec2::splat(1));
     }
 
     #[test]
     fn render_scale_is_clamped_not_trusted() {
-        assert_eq!(Quality::new(Tier::High).with_render_scale(4.0).render_scale, 1.0);
-        assert_eq!(Quality::new(Tier::High).with_render_scale(0.0).render_scale, 0.25);
+        assert_eq!(
+            Quality::new(Tier::High).with_render_scale(4.0).render_scale,
+            1.0
+        );
+        assert_eq!(
+            Quality::new(Tier::High).with_render_scale(0.0).render_scale,
+            0.25
+        );
     }
 }

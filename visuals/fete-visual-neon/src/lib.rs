@@ -341,10 +341,9 @@ impl Material2d for Neon {
             "MARCH_STEPS".into(),
             tier.pick(110, 80, 56),
         ));
-        fragment.shader_defs.push(ShaderDefVal::Int(
-            "MAX_DIST".into(),
-            tier.pick(78, 62, 48),
-        ));
+        fragment
+            .shader_defs
+            .push(ShaderDefVal::Int("MAX_DIST".into(), tier.pick(78, 62, 48)));
         if tier != Tier::High {
             fragment.shader_defs.push("CHEAP_ROAD".into());
         }
