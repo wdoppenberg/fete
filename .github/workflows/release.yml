@@ -126,13 +126,22 @@ jobs:
       - name: Package
         run: |
           set -euo pipefail
+          # Everything a download needs in one folder. The clip fetcher matters
+          # here: it lives in the repository, and someone who downloaded a
+          # release has no repository to reach into.
+          stage="$BINARY-$VERSION-macos-arm64"
+          mkdir -p "dist/$stage"
+          mv dist/FeteShow.app "dist/$stage/"
+          cp tools/fetch-clips.sh README.md "dist/$stage/"
           # ditto, not zip: it is the one that preserves the bundle's
           # signature and symlinks.
           (cd dist && ditto -c -k --sequesterRsrc --keepParent \
-            FeteShow.app "$BINARY-$VERSION-macos-arm64.zip")
+            "$stage" "$stage.zip")
           # The bare binary as well, for running it from a terminal with flags.
-          (cd dist && tar czf "$BINARY-$VERSION-macos-arm64.tar.gz" \
-            -C FeteShow.app/Contents/MacOS "$BINARY" -C "$GITHUB_WORKSPACE" README.md)
+          tar czf "dist/$stage.tar.gz" \
+            -C "dist/$stage/FeteShow.app/Contents/MacOS" "$BINARY" \
+            -C "$GITHUB_WORKSPACE" README.md \
+            -C "$GITHUB_WORKSPACE/tools" fetch-clips.sh
 
       - uses: actions/upload-artifact@v4
         with:
@@ -166,6 +175,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/stage | Out-Null
           Copy-Item "target/x86_64-pc-windows-msvc/release/${env:BINARY}.exe" dist/stage/
           Copy-Item README.md dist/stage/
+          # Bash-only, so it needs Git Bash or WSL here — but it has to be in
+          # the archive to be runnable at all.
+          Copy-Item tools/fetch-clips.sh dist/stage/
           Compress-Archive -Path dist/stage/* `
             -DestinationPath "dist/${env:BINARY}-${env:VERSION}-windows-x86_64.zip"
 
@@ -231,8 +243,33 @@ jobs:
           fete-show --start neon --manual          # one visual, keys in your hands
           ```
 
-          Terebi's video channel needs clips, which are fetched separately with
-          `tools/fetch-clips.sh` from the repository and passed with `--video <dir>`.
+          The default `--video` path is `./video`, relative to the working
+          directory, so an app launched from Finder has no useful one — pass an
+          absolute path, or run the binary from a terminal.
+
+          ## Terebi's televisions
+
+          The video channel wants two things, and falls back to its synthesised
+          channels without either, so the app runs fine before you set them up.
+
+          **ffmpeg on PATH.** Used both to fetch clips and to decode them while
+          the show runs: `brew install ffmpeg`, or `winget install
+          Gyan.FFmpeg`. Without it the channel logs a warning and stays off.
+
+          **Clips.** `fetch-clips.sh` is in this archive. It pulls about 40 MB
+          of segments from the Internet Archive — it seeks over the network, so
+          it takes minutes rather than downloading whole tapes:
+
+          ```sh
+          ./fetch-clips.sh ~/fete-clips
+          fete-show --video ~/fete-clips
+          ```
+
+          It needs bash, curl and python3 alongside ffmpeg; on Windows run it
+          from Git Bash or WSL. Any folder of files ffmpeg can read works just
+          as well, so your own footage is a fine substitute — and the better
+          option for a paid or ticketed room, since the Archive material is
+          off-air broadcast television rather than licensed footage.
 
           Verify a download against `SHA256SUMS.txt`.
           NOTES

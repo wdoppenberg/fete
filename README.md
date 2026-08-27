@@ -817,7 +817,9 @@ git tag v0.2.0 && git push origin v0.2.0
 
 That produces an ad-hoc signed `FeteShow.app` for Apple silicon on macOS 11+,
 with the bare binary alongside it as a tarball, a zip of `fete-show.exe` for
-Windows, and `SHA256SUMS.txt`, attached to a GitHub release. Neither build is signed with a real certificate, so the first
+Windows, and `SHA256SUMS.txt`, attached to a GitHub release. Every archive also
+carries `tools/fetch-clips.sh` and this README: whoever downloads one has no
+repository to reach into, and Terebi's clips have to come from somewhere. Neither build is signed with a real certificate, so the first
 launch needs `xattr -dr com.apple.quarantine` on macOS and *More info → Run
 anyway* on Windows. Running the release workflow by hand from a branch builds
 and packages everything without publishing, which is how to test a change to
