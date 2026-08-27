@@ -26,6 +26,13 @@ env:
   # Registry dependencies are compiled with `--cap-lints allow`, so this denies
   # warnings in this workspace only.
   RUSTFLAGS: -D warnings
+  # Nothing here opens a debugger, and debug info is most of the bulk: every
+  # visual crate is its own Bevy binary, and with symbols the workspace's debug
+  # artifacts run to tens of gigabytes — more than a runner's disk holds. The
+  # test profile inherits dev, but both are set because only one of them is
+  # obvious.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   fmt:
@@ -91,9 +98,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-      # Compiles the binaries as well as the test harnesses, so this is the
-      # per-platform build check too.
-      - run: cargo test --workspace --all-features --all-targets --locked
+      # The runner ships with Android, .NET and GHC toolchains none of this
+      # needs, and linking eight Bevy binaries wants the space more than they
+      # do. Without this the linker dies on a full disk, which it reports as a
+      # bus error rather than anything resembling ENOSPC.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      # Not `--all-targets`: every crate's binary already gets linked here as
+      # its own test harness, and `--all-targets` links each one a second time
+      # as a plain binary for no extra coverage.
+      - run: cargo test --workspace --all-features --locked
       - run: cargo test --workspace --all-features --doc --locked
 
   deny:
