@@ -47,14 +47,26 @@ static void debounce() {
   }
 }
 
-// Light a button while it is held, for whichever LEDs are wired.
+// Whether button i should be lit right now.
+//
+// LED_IDLE_LIT is what puts all ten on: the panel stands lit so it can be found
+// in the dark, and a held button drops out of the row. Off, it is the other way
+// round and only what is held is lit.
+static bool led_wanted(size_t i) {
+  const bool held = stable_mask & (1UL << i);
+  return LED_IDLE_LIT ? !held : held;
+}
+
+// Drive every LED that is wired. Written every pass rather than on change: it is
+// ten register writes, and it means a pin that something else got hold of — the
+// two on UART0 especially — is taken back within a frame instead of staying
+// wrong until the next press.
 static void update_leds() {
   for (size_t i = 0; i < BUTTON_COUNT; ++i) {
     if (LED_PINS[i] < 0) {
       continue;
     }
-    const bool held = stable_mask & (1UL << i);
-    digitalWrite(LED_PINS[i], held ? LED_ON_LEVEL : !LED_ON_LEVEL);
+    digitalWrite(LED_PINS[i], led_wanted(i) ? LED_ON_LEVEL : !LED_ON_LEVEL);
   }
 }
 
@@ -66,8 +78,11 @@ void setup() {
     last_reading[i] = digitalRead(BUTTON_PINS[i]);
     last_change_ms[i] = 0;
     if (LED_PINS[i] >= 0) {
+      // pinMode first, then the level: this is what takes GPIO 43 and 44 off
+      // UART0, whose idle-high TX is why one button was lit before any of this
+      // code ran. Serial is the native USB CDC port, so UART0 loses nothing.
       pinMode(LED_PINS[i], OUTPUT);
-      digitalWrite(LED_PINS[i], !LED_ON_LEVEL);
+      digitalWrite(LED_PINS[i], LED_IDLE_LIT ? LED_ON_LEVEL : !LED_ON_LEVEL);
     }
   }
 
@@ -97,7 +112,14 @@ void setup() {
     Serial.println("esp-now peer failed");
   }
 
-  Serial.printf("transmitter up, %u buttons, mac %s\n", (unsigned)BUTTON_COUNT,
+  size_t lit = 0;
+  for (size_t i = 0; i < BUTTON_COUNT; ++i) {
+    if (LED_PINS[i] >= 0) {
+      ++lit;
+    }
+  }
+  Serial.printf("transmitter up, %u buttons, %u leds, mac %s\n",
+                (unsigned)BUTTON_COUNT, (unsigned)lit,
                 WiFi.macAddress().c_str());
 }
 

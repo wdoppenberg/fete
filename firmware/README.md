@@ -1,17 +1,18 @@
 # The button panel firmware
 
-Three apps, one PlatformIO project, two ESP32-S3 boards.
+Four apps, one PlatformIO project, two ESP32-S3 boards.
 
 ```
 [10 lit buttons] ──GPIO──> [S3: transmitter] ──ESP-NOW──> [S3: receiver] ──USB C──> fete-show
                             on the screen                  on the laptop            --panel <port>
 ```
 
-| App           | Runs on              | What it does                                    |
-| ------------- | -------------------- | ----------------------------------------------- |
-| `discover`    | the button board     | Reports which GPIO each button is wired to      |
-| `transmitter` | the button board     | Reads the buttons, broadcasts their state       |
-| `receiver`    | the laptop's USB     | Repeats what it hears as lines on the USB port  |
+| App            | Runs on              | What it does                                    |
+| -------------- | -------------------- | ----------------------------------------------- |
+| `discover`     | the button board     | Reports which GPIO each button is wired to      |
+| `led-discover` | the button board     | Reports which GPIO lights each button           |
+| `transmitter`  | the button board     | Reads the buttons, broadcasts their state       |
+| `receiver`     | the laptop's USB     | Repeats what it hears as lines on the USB port  |
 
 The line format between the receiver and the laptop is
 [`../crates/fete-input-panel/PROTOCOL.md`](../crates/fete-input-panel/PROTOCOL.md).
@@ -30,7 +31,7 @@ been found dead, so the `receiver` environment deliberately uses the CH343
 socket instead. On Linux those normally appear as `/dev/ttyACM*` (native) and
 `/dev/ttyUSB*` (CH343); on macOS use the matching `/dev/cu.*` device.
 
-The devcontainer installs the pinned PlatformIO CLI and pre-builds all three
+The devcontainer installs the pinned PlatformIO CLI and pre-builds all four
 firmware environments. Outside it, install PlatformIO Core before continuing.
 List the ports before and after plugging in one board to identify it:
 
@@ -60,14 +61,47 @@ button 1  ->  GPIO 5
 Send any character to print a ready-made `BUTTON_PINS` line. Paste it into
 `include/panel_config.h`, replacing the existing table.
 
-Two things discovery cannot do:
+Two things this app cannot do:
 
 - **It cannot find the LED pins.** They are outputs, and nothing can identify an
-  output by watching it. Take those from the original program's source. Until
-  you have them, leave `LED_PINS` at `-1` and the firmware will not touch the
-  LEDs at all — whatever they were doing before continues.
+  output by watching it. That is what `led-discover` is for; see below.
 - **It cannot tell you the polarity** if your buttons pull high rather than low.
   If pressing prints nothing but releasing does, flip `BUTTON_PRESSED_LEVEL`.
+
+## 1b. Find your LED pins
+
+```sh
+pio run -e led-discover -t upload
+pio device monitor
+```
+
+`LED_PINS` was found from this panel on 2026-08-28, so skip this too unless the
+wiring changed. The app drives pins and you watch, which is the only way round
+that works for an output. `m` is the one that matters: it blinks one GPIO at a
+time and waits for you to **press whichever button blinked**, so the press that
+answers "this one" also says which button it is, and the table falls out of the
+walk with nothing to write down. It prints a ready-made `LED_PINS` line at the
+end, and starts from the table already in `panel_config.h`, so a second run only
+chases the buttons the first one missed.
+
+The other modes are there for when `m` finds nothing:
+
+| Key | What it does                                                          |
+| --- | --------------------------------------------------------------------- |
+| `p` | Probes each pin electrically — finds what has a load on it, no eyes    |
+| `a` | Drives every spare pin at once: is anything wired to a GPIO at all     |
+| `d` | Plain sweep, one pin at a time, both polarities                        |
+| `w` | Chain sweep — WS2812-style LEDs on a single data pin                   |
+| `l` | The pins the others avoid: UART0 and the strapping pins                |
+| `x` | Forget the table so `m` walks everything again                         |
+
+Blinking, not holding steady, is deliberate. A panel can have a button that is
+lit by something other than your code, and against a steady test light that
+button looks like the answer at every step — which is exactly how the first run
+of this came back with one button claiming eleven different pins.
+
+If `m` and `l` both come up empty the LEDs are not on the ESP32's pins at all,
+and the board has to be traced.
 
 ## 2. Flash the two boards
 
@@ -84,6 +118,20 @@ asserts.
 `board_build.arduino.memory_type = qio_opi` in `platformio.ini` is what makes an
 octal-PSRAM module boot. With the default it resets in a loop for no visible
 reason.
+
+## What the buttons look like
+
+The panel stands **lit** — all ten — and a held button goes dark. `LED_IDLE_LIT`
+in `panel_config.h` flips that to a dark panel where only what is held lights.
+Lit is the default because the panel lives in the dark beside a DJ, and these are
+plain on/off GPIOs with no brightness to modulate, so the standing light is the
+only thing a press has to give up.
+
+Two of the LEDs sit on GPIO 43 and 44, which are UART0's TX and RX. That costs
+nothing — `Serial` is the native USB CDC port — but **TX idles high**, so button
+0's LED is lit by the pin's default function from the moment the board is
+powered, before any code runs. `setup()` takes the pin over and it joins the
+others. The ROM's boot log still blips that one button at every reset.
 
 ## 3. Run the show
 
