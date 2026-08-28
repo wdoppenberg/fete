@@ -18,6 +18,7 @@
 use bevy::prelude::*;
 use fete_app::prelude::*;
 use fete_core::prelude::*;
+use fete_input_panel::{PanelMap, PanelPlugin};
 use fete_video::VideoPlugin;
 use fete_visual_kanban::KanbanPlugin;
 use fete_visual_kura::KuraPlugin;
@@ -49,7 +50,10 @@ fn main() -> AppExit {
         config = config.with_quality(quality);
     }
 
-    let manual = args.manual;
+    // `--panel-test` implies manual: with the autopilot cycling visuals and
+    // drifting knobs underneath, half of what a tester sees is the show moving
+    // on its own, and attributing a change to a button becomes guesswork.
+    let manual = args.manual || args.panel_test;
     let rotate = args.rotate;
 
     let mut app = show(config);
@@ -59,6 +63,18 @@ fn main() -> AppExit {
     // and decide what the app reads off the disk.
     if let Some(dir) = args.video {
         app.add_plugins(VideoPlugin::from_dir(dir));
+    }
+    // The button panel on the screen, if its receiver is plugged in. Absent,
+    // unplugged or out of radio range are all the same thing to the show: it
+    // runs as it always has.
+    if let Some(port) = args.panel {
+        let plugin = PanelPlugin::on_port(port);
+        // Bring-up mapping: eight effects nobody could mistake for each other.
+        app.add_plugins(if args.panel_test {
+            plugin.with_map(PanelMap::distinct())
+        } else {
+            plugin
+        });
     }
 
     app
@@ -185,6 +201,10 @@ struct Args {
     quality: Option<Quality>,
     /// Directory of clips for Terebi's video channel. `None` disables it.
     video: Option<String>,
+    /// Serial port the button panel's receiver is on. `None` disables it.
+    panel: Option<String>,
+    /// Use the bring-up button mapping rather than the show one.
+    panel_test: bool,
 }
 
 impl Args {
@@ -214,8 +234,24 @@ impl Args {
                  --quality <t>    high, medium or low (default: probe the GPU)\n\
                  --render-scale <f>  fraction of the window to render at, 0.25-1.0\n\
                  --video <dir>    clips for Terebi's televisions (default ./video)\n\
-                 --no-video       leave the televisions on the synthesised channels\n"
+                 --no-video       leave the televisions on the synthesised channels\n\
+                 --panel <port>   serial port of the button panel's receiver\n\
+                 --panel-list     list serial ports and exit\n\
+                 --panel-test     obvious effect per button, autopilot off; for bring-up\n"
             );
+            std::process::exit(0);
+        }
+
+        // Finding the receiver in a dark venue is otherwise a guessing game.
+        if has("--panel-list") {
+            let ports = fete_input_panel::available();
+            if ports.is_empty() {
+                println!("no serial ports found");
+            } else {
+                for port in ports {
+                    println!("{port}");
+                }
+            }
             std::process::exit(0);
         }
 
@@ -236,6 +272,10 @@ impl Args {
             } else {
                 Some(value("--video").unwrap_or_else(|| "video".to_string()))
             },
+            // Off unless asked for: an unrelated device on a guessed port is a
+            // worse failure than no panel at all.
+            panel: value("--panel"),
+            panel_test: has("--panel-test"),
         }
     }
 }
