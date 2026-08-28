@@ -21,6 +21,7 @@ fete-video = { workspace = true }
 fete-input-panel = { workspace = true }
 fete-visual-kanban = { workspace = true }
 fete-visual-kura = { workspace = true }
+fete-visual-momiji = { workspace = true }
 fete-visual-neon = { workspace = true }
 fete-visual-slime = { workspace = true }
 fete-visual-sprawl = { workspace = true }
@@ -33,6 +34,7 @@ hot-shaders = [
     "fete-app/hot-shaders",
     "fete-visual-kanban/hot-shaders",
     "fete-visual-kura/hot-shaders",
+    "fete-visual-momiji/hot-shaders",
     "fete-visual-neon/hot-shaders",
     "fete-visual-slime/hot-shaders",
     "fete-visual-sprawl/hot-shaders",

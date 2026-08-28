@@ -7,6 +7,7 @@ members = [
     "crates/fete-input-panel",
     "visuals/fete-visual-kanban",
     "visuals/fete-visual-kura",
+    "visuals/fete-visual-momiji",
     "visuals/fete-visual-neon",
     "visuals/fete-visual-slime",
     "visuals/fete-visual-sprawl",
@@ -34,6 +35,7 @@ fete-video = { path = "crates/fete-video" }
 fete-input-panel = { path = "crates/fete-input-panel" }
 fete-visual-kanban = { path = "visuals/fete-visual-kanban" }
 fete-visual-kura = { path = "visuals/fete-visual-kura" }
+fete-visual-momiji = { path = "visuals/fete-visual-momiji" }
 fete-visual-neon = { path = "visuals/fete-visual-neon" }
 fete-visual-slime = { path = "visuals/fete-visual-slime" }
 fete-visual-sprawl = { path = "visuals/fete-visual-sprawl" }
