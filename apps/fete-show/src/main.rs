@@ -22,6 +22,7 @@ use fete_input_panel::{PanelMap, PanelPlugin};
 use fete_video::VideoPlugin;
 use fete_visual_kanban::KanbanPlugin;
 use fete_visual_kura::KuraPlugin;
+use fete_visual_momiji::MomijiPlugin;
 use fete_visual_neon::NeonPlugin;
 use fete_visual_slime::SlimePlugin;
 use fete_visual_sprawl::SprawlPlugin;
@@ -80,18 +81,20 @@ fn main() -> AppExit {
     app
         // The set. This order is what the autopilot cycles through and what the
         // digit keys select. Kanban sits away from the two city visuals so the
-        // night never runs three Tokyo pieces back to back, and Yama — the one
-        // landscape — sits between them as the break from the city. Terebi
-        // follows it: the only visual shot indoors, and the only one where the
-        // light in the frame is coming from objects in a room rather than from
-        // a city, so it lands as a change of place rather than of subject.
-        // Kura goes last, between Kanban and the wrap back to Sprawl: it is the
-        // only visual with no horizon and no architecture in it, so it reads as
-        // the room going abstract for a while before the city comes back.
+        // night never runs three Tokyo pieces back to back, and Yama and Momiji
+        // — the two with a horizon and a garden in them — sit either side of
+        // that run as the break from the city. Terebi follows: the only visual
+        // shot indoors, and the only one where the light in the frame is coming
+        // from objects in a room rather than from a city, so it lands as a
+        // change of place rather than of subject. Kura goes last, between
+        // Kanban and the wrap back to Sprawl: it is the only visual with no
+        // horizon and no architecture in it, so it reads as the room going
+        // abstract for a while before the city comes back.
         .add_plugins((
             SprawlPlugin,
             NeonPlugin,
             YamaPlugin,
+            MomijiPlugin,
             TerebiPlugin,
             SlimePlugin,
             KanbanPlugin,
