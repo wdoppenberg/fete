@@ -163,7 +163,7 @@ pub struct PanelState {
     last_frame: Option<f64>,
     /// Whether the panel is currently considered reachable.
     pub connected: bool,
-    /// Frames the sequence numbers say went missing, since startup.
+    /// ESP-NOW packets the transmitter sequence says went missing, since startup.
     pub dropped: u64,
     /// Last sequence number seen.
     last_seq: Option<u16>,
@@ -212,23 +212,27 @@ fn receive_frames(mailbox: Res<Mailbox>, clock: Res<ShowClock>, mut state: ResMu
     state.previous = state.buttons;
 
     for frame in mailbox.drain() {
-        if let Some(last) = state.last_seq {
-            // Wrapping arithmetic: the counter rolls over every 65536 frames,
-            // which at 50 Hz is about twenty minutes into a set.
-            let gap = frame.seq.wrapping_sub(last).saturating_sub(1);
-            state.dropped += u64::from(gap);
+        let panel_fresh = frame.panel_age_ms <= PANEL_TIMEOUT_MS;
+        if panel_fresh {
+            if let Some(last) = state.last_seq {
+                // Wrapping arithmetic: the counter rolls over every 65536
+                // packets, which at 50 Hz is about twenty minutes into a set.
+                let gap = frame.seq.wrapping_sub(last).saturating_sub(1);
+                state.dropped += u64::from(gap);
+            }
+            state.last_seq = Some(frame.seq);
+        } else {
+            // Sequence zero is emitted before the receiver has ever heard the
+            // panel. Forget the baseline across any outage so the first packet
+            // back is not mistaken for a giant gap.
+            state.last_seq = None;
         }
-        state.last_seq = Some(frame.seq);
         state.last_frame = Some(clock.elapsed);
 
         // The receiver is talking, but it may be repeating a panel that has
         // gone quiet. Treat a stale panel as no buttons held rather than as
         // whatever was held when it disappeared.
-        state.buttons = if frame.panel_age_ms > PANEL_TIMEOUT_MS {
-            0
-        } else {
-            frame.buttons
-        };
+        state.buttons = if panel_fresh { frame.buttons } else { 0 };
     }
 
     let alive = state
@@ -256,6 +260,7 @@ fn apply_buttons(
     palette: Res<Palette>,
     mut morph: ResMut<PaletteMorph>,
     mut modulation: ResMut<Modulation>,
+    mut autopilot: ResMut<Autopilot>,
     mut output: ResMut<ShowOutput>,
     mut macros: ResMut<Macros>,
     mut requests: MessageWriter<VisualRequest>,
@@ -301,10 +306,14 @@ fn apply_buttons(
             PanelAction::Select(index) if just_pressed => {
                 if let Some(info) = registry.get(index) {
                     requests.write(VisualRequest::Show(info.id));
+                    // Give a person's choice a complete hold instead of
+                    // allowing an older automation deadline to replace it.
+                    autopilot.restart_visuals(&clock);
                 }
             }
             PanelAction::Cycle(by) if just_pressed => {
                 requests.write(VisualRequest::Cycle(by));
+                autopilot.restart_visuals(&clock);
             }
             PanelAction::Tap if just_pressed => clock.tap(),
             PanelAction::NextPalette if just_pressed => morph.next(*palette),
@@ -401,6 +410,24 @@ mod tests {
         send(&app, 0, 5, 0);
         tick(&mut app, 0.016);
         assert_eq!(app.world().resource::<PanelState>().dropped, 3);
+    }
+
+    #[test]
+    fn repeated_radio_sequence_is_not_a_drop() {
+        let mut app = harness();
+        send(&app, 0, 7, 0);
+        send(&app, 0, 7, 20);
+        tick(&mut app, 0.016);
+        assert_eq!(app.world().resource::<PanelState>().dropped, 0);
+    }
+
+    #[test]
+    fn first_packet_after_radio_outage_starts_a_new_sequence_baseline() {
+        let mut app = harness();
+        send(&app, 0, 0, PANEL_TIMEOUT_MS + 1);
+        send(&app, 0, 500, 0);
+        tick(&mut app, 0.016);
+        assert_eq!(app.world().resource::<PanelState>().dropped, 0);
     }
 
     #[test]

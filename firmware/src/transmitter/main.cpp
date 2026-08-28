@@ -73,7 +73,16 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  // Keep ordinary B/G/N rates available and add Espressif's long-range PHY.
+  // Both ends set the same bitmap; at this tiny data rate the extra link
+  // margin matters far more than peak throughput in a room full of people.
+  const uint8_t protocols = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
+                            WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR;
+  if (esp_wifi_set_protocol(WIFI_IF_STA, protocols) != ESP_OK ||
+      esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
+    Serial.println("radio configuration failed");
+    ESP.restart();
+  }
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("esp-now init failed");

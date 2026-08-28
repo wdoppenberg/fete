@@ -23,8 +23,8 @@ static const uint32_t NEVER_HEARD_MS = 999999;
 
 static volatile uint32_t latest_buttons = 0;
 static volatile uint32_t latest_rx_ms = 0;
+static volatile uint16_t latest_radio_seq = 0;
 static volatile bool heard_anything = false;
-static uint16_t out_sequence = 0;
 static uint32_t last_send_ms = 0;
 
 static void on_packet(const uint8_t *data, int len) {
@@ -37,6 +37,7 @@ static void on_packet(const uint8_t *data, int len) {
     return;
   }
   latest_buttons = packet.buttons;
+  latest_radio_seq = packet.seq;
   latest_rx_ms = millis();
   heard_anything = true;
 }
@@ -58,7 +59,13 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  const uint8_t protocols = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G |
+                            WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR;
+  if (esp_wifi_set_protocol(WIFI_IF_STA, protocols) != ESP_OK ||
+      esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
+    Serial.println("# radio configuration failed");
+    ESP.restart();
+  }
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("# esp-now init failed");
@@ -68,8 +75,8 @@ void setup() {
 
   // A comment line, which the host ignores. Handy when you open the port in a
   // terminal and want to know the board came up rather than sitting mute.
-  Serial.printf("# receiver up, channel %u, mac %s\n", (unsigned)ESPNOW_CHANNEL,
-                WiFi.macAddress().c_str());
+  Serial.printf("# receiver up, channel %u, BGN+LR, mac %s\n",
+                (unsigned)ESPNOW_CHANNEL, WiFi.macAddress().c_str());
 }
 
 void loop() {
@@ -80,7 +87,9 @@ void loop() {
   last_send_ms = now;
 
   const uint32_t age = heard_anything ? (now - latest_rx_ms) : NEVER_HEARD_MS;
+  // Forward the transmitter's counter. Repeats are expected when this USB
+  // loop runs before the next radio packet; forward jumps expose ESP-NOW loss.
   Serial.printf("P %08lx %u %lu\n", static_cast<unsigned long>(latest_buttons),
-                static_cast<unsigned>(++out_sequence),
+                static_cast<unsigned>(latest_radio_seq),
                 static_cast<unsigned long>(age));
 }

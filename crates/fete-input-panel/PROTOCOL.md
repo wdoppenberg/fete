@@ -23,7 +23,7 @@ P <mask> <seq> <age>
 | Field  | Type          | Meaning                                                     |
 | ------ | ------------- | ----------------------------------------------------------- |
 | `mask` | hex, up to 8 digits | Bit *n* set means button *n* is **currently held**.    |
-| `seq`  | decimal u16   | Wrapping counter, incremented once per frame sent.           |
+| `seq`  | decimal u16   | Transmitter's wrapping ESP-NOW packet counter.               |
 | `age`  | decimal u32   | Milliseconds since the receiver last heard from the panel.   |
 
 Lines beginning with `#` are comments and are ignored, so the firmware can log
@@ -32,8 +32,9 @@ to the same port while you are bringing it up.
 ```
 # receiver up, ch 6, LR mode
 P 00000000 1 4
+P 00000000 1 24     <- repeat: no new radio packet before this USB frame
 P 00000005 2 9      <- buttons 0 and 2 held
-P 00000004 3 7      <- button 0 released
+P 00000004 4 7      <- button 0 released; radio packet 3 was missed
 ```
 
 ## Rules the firmware must follow
@@ -57,12 +58,16 @@ on the screen is still talking. Report the real figure; if it exceeds 1.5 s the
 host treats every button as released rather than latching whatever was held
 when the panel vanished.
 
+**`seq` belongs to the transmitter.** The receiver forwards the newest radio
+packet's counter on every USB frame. Repeated values are normal; a forward jump
+measures packets lost over ESP-NOW rather than lines lost over USB.
+
 ## Radio notes
 
 - **ESP-NOW**, not an AP association. Connectionless, ~1–2 ms, no reconnect
   storm when the link drops.
-- **Enable long-range mode** on both ends
-  (`esp_wifi_set_protocol(..., WIFI_PROTOCOL_LR)`). You are sending a dozen
+- **Long-range mode is enabled** on both ends
+  (`esp_wifi_set_protocol(..., WIFI_PROTOCOL_LR)`). The link sends a dozen
   bytes at 50 Hz; trading bitrate for link margin is free here and buys a lot
   in a crowded room.
 - **Pin the channel**, both ends the same, away from the site wifi.

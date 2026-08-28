@@ -8,7 +8,7 @@
 //! ```text
 //! P 0000000a 4213 12
 //! │ │        │    └── milliseconds since the receiver last heard the panel
-//! │ │        └─────── sequence number, wrapping, for spotting dropped frames
+//! │ │        └─────── transmitter sequence, for spotting lost radio packets
 //! │ └──────────────── button bitmask in hex, bit 0 is button 0
 //! └────────────────── frame kind
 //! ```
@@ -28,7 +28,10 @@ use std::fmt;
 pub struct Frame {
     /// Bit `n` set means button `n` is currently held.
     pub buttons: u32,
-    /// Wrapping counter from the receiver, for logging dropped frames.
+    /// Wrapping counter from the transmitter's ESP-NOW packets.
+    ///
+    /// The receiver repeats a value when it writes another USB frame before a
+    /// new radio packet arrives. Forward jumps reveal radio packet loss.
     pub seq: u16,
     /// How long ago the receiver last heard from the panel, in milliseconds.
     ///
