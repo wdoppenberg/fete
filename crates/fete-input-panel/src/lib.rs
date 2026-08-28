@@ -98,24 +98,16 @@ pub enum PanelAction {
 pub struct PanelMap(pub Vec<PanelAction>);
 
 impl Default for PanelMap {
-    /// Ten buttons: step the visual, tap the tempo, shift the palette, and six
-    /// knobs to lean on.
+    /// Ten buttons: step the visual backwards or forwards, then jump directly
+    /// to each of the eight visuals.
     ///
     /// The navigation buttons come first because they are the ones whose effect
     /// is obvious to somebody who has never seen the panel — press it, the
-    /// picture changes. The knobs reward a longer press and are the reason to
-    /// stay.
+    /// picture changes. The direct-select buttons follow the visual registry's
+    /// order.
     fn default() -> Self {
-        let mut actions = vec![
-            PanelAction::Cycle(1),
-            PanelAction::Cycle(-1),
-            PanelAction::Tap,
-            PanelAction::NextPalette,
-        ];
-        actions.extend((0..6).map(|macro_index| PanelAction::Hold {
-            macro_index,
-            target: 1.0,
-        }));
+        let mut actions = vec![PanelAction::Cycle(-1), PanelAction::Cycle(1)];
+        actions.extend((0..8).map(PanelAction::Select));
         Self(actions)
     }
 }
@@ -361,6 +353,25 @@ mod tests {
             seq,
             panel_age_ms,
         });
+    }
+
+    #[test]
+    fn default_map_has_navigation_and_all_eight_visuals() {
+        assert_eq!(
+            PanelMap::default().0,
+            vec![
+                PanelAction::Cycle(-1),
+                PanelAction::Cycle(1),
+                PanelAction::Select(0),
+                PanelAction::Select(1),
+                PanelAction::Select(2),
+                PanelAction::Select(3),
+                PanelAction::Select(4),
+                PanelAction::Select(5),
+                PanelAction::Select(6),
+                PanelAction::Select(7),
+            ]
+        );
     }
 
     #[test]

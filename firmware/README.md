@@ -148,12 +148,24 @@ unless you press something.
 
 There is no blackout in this mapping, on purpose.
 
-Drop `--panel-test` and the buttons take the show mapping: 0 and 1 step through
-the visuals, 2 taps tempo, 3 shifts the palette, and 4–9 hold macro knobs 0–5.
-Those are deliberately subtler — a knob moves about a third of its range per
-half-second press and the autopilot drifts it back — so use test mode to prove
-the wiring and the show mapping to judge the feel. A visual chosen from the
-panel gets a fresh full autopilot hold before automation changes it again.
+Drop `--panel-test` and the buttons take the production show mapping:
+
+| Button | Effect                  |
+| ------ | ----------------------- |
+| 0      | previous visual         |
+| 1      | next visual             |
+| 2      | sprawl                  |
+| 3      | neon                    |
+| 4      | yama                    |
+| 5      | terebi                  |
+| 6      | slime                   |
+| 7      | kanban                  |
+| 8      | kura                    |
+| 9      | eighth visual           |
+
+Button 9 does nothing until the eighth visual is registered. A visual chosen
+from the panel gets a fresh full autopilot hold before automation changes it
+again.
 
 ## Pairing and range
 
