@@ -5,3 +5,7 @@
 
 # Fetched by tools/fetch-font.sh; the atlas baked from it is what ships.
 /tools/glyph-atlas/*.otf
+
+# PlatformIO build output.
+/firmware/.pio
+/firmware/original-firmware.bin

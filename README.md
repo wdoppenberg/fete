@@ -757,6 +757,39 @@ The non-function-key bindings exist because macOS treats `F1`/`F11`/`F12` as
 media keys unless the user has changed a system setting, which makes an
 F-key-only binding unreachable on the average laptop.
 
+### Wireless button panel
+
+Two ESP32-S3 boards can put physical buttons in front of the show without
+making the projector machine join a wireless network. The button board sends
+absolute state over ESP-NOW; a second board repeats it over USB serial. The
+show remains on autopilot and the buttons temporarily override it.
+
+```sh
+cd firmware
+pio run -e transmitter -t upload --upload-port /dev/ttyACM0
+pio run -e receiver -t upload --upload-port /dev/ttyUSB0
+
+cd ..
+cargo run -p fete-show -- --panel-list
+cargo run -p fete-show -- --panel /dev/ttyUSB0 --panel-test --no-video
+```
+
+### How to run the live show app
+To first validate the existing connection between the transmitter and receiver, run the panel-monitor and check that the printed panel age is 0-20ms.
+```sh
+cargo run --locked -p fete-input-panel   --example panel-monitor --   /dev/serial/by-id/<DEVICE_ID>
+```
+
+Run the live app and have fun!
+```sh
+cargo run --release --locked -p fete-show -- --panel /dev/serial/by-id/<DEVICE_ID>  --no-video
+```
+
+Port names vary; `pio device list` identifies them. The pin table, USB-socket
+details, wiring cautions, bring-up sequence and production command are in
+[`firmware/README.md`](firmware/README.md). The host/firmware line protocol is
+in [`crates/fete-input-panel/PROTOCOL.md`](crates/fete-input-panel/PROTOCOL.md).
+
 ### Manual control versus the autopilot
 
 They coexist. Moving a knob claims it: the autopilot stops drifting *that* knob
