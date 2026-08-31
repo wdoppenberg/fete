@@ -2304,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "fete-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-core",
@@ -2312,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "fete-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bytemuck",
@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "fete-glyph-atlas"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ab_glyph",
  "png 0.17.16",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "fete-input-panel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-core",
@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "fete-show"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "fete-video"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "rand 0.9.5",
@@ -2364,7 +2364,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-kanban"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
@@ -2373,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-kura"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
@@ -2382,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-momiji"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-neon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-slime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bytemuck",
@@ -2411,7 +2411,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-sprawl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-terebi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
@@ -2430,7 +2430,7 @@ dependencies = [
 
 [[package]]
 name = "fete-visual-yama"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "fete-app",
