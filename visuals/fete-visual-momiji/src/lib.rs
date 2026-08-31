@@ -97,10 +97,9 @@ impl Material2d for Momiji {
         // Leaf layers give the fall its parallax. Losing the two thin, distant
         // ones on the cheap tiers costs depth, not the leaves themselves — the
         // near layer, doing most of the reading, is kept at every tier.
-        fragment.shader_defs.push(ShaderDefVal::Int(
-            "LEAF_LAYERS".into(),
-            tier.pick(3, 2, 1),
-        ));
+        fragment
+            .shader_defs
+            .push(ShaderDefVal::Int("LEAF_LAYERS".into(), tier.pick(3, 2, 1)));
         Ok(())
     }
 }
